@@ -82,7 +82,8 @@ export interface ListResult<T> {
  * Narrow, stable interface every tool depends on. Tool-facing vocabulary is
  * "budget" throughout (matches the YNAB product and this server's tool
  * schemas) even though the underlying `ynab` SDK's primary resource is now
- * `planId` (see docs/plans/ynab-mcp-server-plan.md, "API reference" section).
+ * `planId` (YNAB introduced `/plans/{plan_id}` as the primary API path in
+ * v1.79.0, keeping `/budgets/{budget_id}` only for backward compatibility).
  * This file is the only place that touches `api.plans` / `planId` directly.
  */
 export interface YnabClient {

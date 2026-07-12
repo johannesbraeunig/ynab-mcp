@@ -2,7 +2,7 @@
 
 An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Need A Budget), so an LLM client such as Claude Desktop can analyze your budget, accounts, categories, and transactions.
 
-**Status: early work in progress.** All planned tool areas are implemented: read-only budget analysis, category management, transaction management, and account/budget setup — see [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and the hardening work still planned before a 1.0.
+**Status: early work in progress.** All planned tool areas are implemented: read-only budget analysis, category management, transaction management, and account/budget setup. The one thing not yet done is a manual end-to-end pass through Claude Desktop against a real budget (everything else is covered by the automated test suite).
 
 ## What it can do today
 
@@ -89,7 +89,8 @@ Restart Claude Desktop and the `ynab_*` tools should be available.
 ## Safety
 
 - Category and transaction management tools create and modify data in your live budget. Create/update tools are annotated `readOnlyHint: false`, `destructiveHint: false` (data isn't lost, just changed).
-- `ynab_delete_transaction` is the one destructive tool implemented so far: it's annotated `destructiveHint: true`, requires an explicit `confirm: true` field in the tool call (calls without it are rejected before any request reaches YNAB), and returns the deleted transaction's fields in the result so the call is auditable afterwards. See the [security notes in the design plan](docs/plans/ynab-mcp-server-plan.md#security-notes) for the full intended safeguards, including that host-level tool-call approval (e.g. in Claude Desktop) remains the primary line of defense — the `confirm` field is defense-in-depth, not a substitute for it.
+- `ynab_delete_transaction` is the one destructive tool implemented so far: it's annotated `destructiveHint: true`, requires an explicit `confirm: true` field in the tool call (calls without it are rejected before any request reaches YNAB), and returns the deleted transaction's fields in the result so the call is auditable afterwards. Host-level tool-call approval (e.g. in Claude Desktop) remains the primary line of defense against a bad or malicious tool call — the `confirm` field is defense-in-depth, not a substitute for it.
+- YNAB personal access tokens are not scoped — there's no way to grant this server read-only or budget-limited access. It gets full read/write access to your entire YNAB account, same as the YNAB app itself.
 - Your access token is read once from the `YNAB_ACCESS_TOKEN` environment variable at startup and is never logged or written to disk by this server.
 
 ## Development
@@ -104,11 +105,9 @@ pnpm test        # unit + integration tests (vitest)
 
 The integration tests (`test/integration/server.test.ts`) run the real MCP server against the real `ynab` SDK, with [MSW](https://mswjs.io/) mocking the underlying HTTP calls to `api.ynab.com` — no live network access or real YNAB account needed to run `pnpm test`.
 
-`pnpm test:live` is reserved for opt-in tests against a real YNAB account (gated behind env vars, excluded from `pnpm test`) as described in the design plan, but that test suite hasn't been written yet — running it today will just report "no test files found."
+`pnpm test:live` is reserved for opt-in tests against a real YNAB account (gated behind env vars, excluded from `pnpm test`), but that test suite hasn't been written yet — running it today will just report "no test files found."
 
-The one piece of hardening not yet done is a manual end-to-end pass through Claude Desktop against a real budget (see "Configure Claude Desktop" above) — everything else is covered by the automated test suite and mocked YNAB responses.
-
-See [CLAUDE.md](CLAUDE.md) for architecture notes and [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design plan, including the phased roadmap for write tools.
+See [CLAUDE.md](CLAUDE.md) for architecture notes.
 
 ## License
 
