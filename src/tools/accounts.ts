@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import type { YnabClient } from "../ynab/client.js";
 import { budgetIdSchema } from "../schemas/common.js";
 import { milliunitsBrand } from "../ynab/types.js";
@@ -29,6 +30,32 @@ export function registerAccountTools(server: McpServer, ynab: YnabClient): void 
             balance_formatted: a.balance_formatted,
           }));
         return jsonToolResult(summary);
+      }),
+  );
+
+  server.registerTool(
+    "ynab_get_account",
+    {
+      title: "Get a YNAB account",
+      description: "Get a single account by id, with balances in milliunits.",
+      inputSchema: {
+        budget_id: budgetIdSchema,
+        account_id: z.string().min(1).describe("YNAB account id"),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ budget_id, account_id }: { budget_id: string; account_id: string }) =>
+      withYnabErrorHandling(async () => {
+        const a = await ynab.getAccount(budget_id, account_id);
+        return jsonToolResult({
+          id: a.id,
+          name: a.name,
+          type: a.type,
+          on_budget: a.on_budget,
+          closed: a.closed,
+          balance: milliunitsBrand.parse(a.balance),
+          balance_formatted: a.balance_formatted,
+        });
       }),
   );
 }

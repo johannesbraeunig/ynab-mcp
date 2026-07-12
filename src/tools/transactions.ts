@@ -78,4 +78,94 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
       });
     },
   );
+
+  server.registerTool(
+    "ynab_get_spending_summary",
+    {
+      title: "Get YNAB spending summary by category",
+      description:
+        `Summarize spending (outflow) and income (inflow) per category over a date range, computed client-side from transactions (YNAB has no single endpoint for this). Defaults to the last ${DEFAULT_WINDOW_DAYS} days if since_date is not given. ` +
+        "Narrow the date range for large or long-lived budgets, both to keep the response small and to avoid burning YNAB's 200-requests/hour rate limit.",
+      inputSchema: {
+        budget_id: budgetIdSchema,
+        since_date: isoDateSchema
+          .optional()
+          .describe(
+            `Only include transactions on or after this date. Defaults to ${DEFAULT_WINDOW_DAYS} days ago. Must not be after until_date.`,
+          ),
+        until_date: isoDateSchema
+          .optional()
+          .describe("Only include transactions on or before this date."),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({
+      budget_id,
+      since_date,
+      until_date,
+    }: {
+      budget_id: string;
+      since_date?: string | undefined;
+      until_date?: string | undefined;
+    }) => {
+      const sinceDate = since_date ?? defaultSinceDate();
+      if (until_date !== undefined && sinceDate > until_date) {
+        return errorToolResult(
+          `since_date (${sinceDate}) must not be after until_date (${until_date}).`,
+        );
+      }
+
+      return withYnabErrorHandling(async () => {
+        const transactions = await ynab.listTransactions(budget_id, {
+          sinceDate,
+          ...(until_date !== undefined && { untilDate: until_date }),
+        });
+
+        const byCategory = new Map<
+          string,
+          {
+            category_id: string | null;
+            category_name: string | null;
+            outflow: number;
+            inflow: number;
+            transaction_count: number;
+          }
+        >();
+        for (const t of transactions) {
+          if (t.deleted) continue;
+          const key = t.category_id ?? "__uncategorized__";
+          const entry = byCategory.get(key) ?? {
+            category_id: t.category_id ?? null,
+            category_name: t.category_name ?? null,
+            outflow: 0,
+            inflow: 0,
+            transaction_count: 0,
+          };
+          if (t.amount < 0) {
+            entry.outflow += -t.amount;
+          } else {
+            entry.inflow += t.amount;
+          }
+          entry.transaction_count += 1;
+          byCategory.set(key, entry);
+        }
+
+        const summary = [...byCategory.values()]
+          .map((entry) => ({
+            category_id: entry.category_id,
+            category_name: entry.category_name,
+            outflow: milliunitsBrand.parse(entry.outflow),
+            inflow: milliunitsBrand.parse(entry.inflow),
+            transaction_count: entry.transaction_count,
+          }))
+          .sort((a, b) => b.outflow - a.outflow);
+
+        return jsonToolResult({
+          since_date: sinceDate,
+          until_date: until_date ?? null,
+          categories: summary,
+        });
+      });
+    },
+  );
 }

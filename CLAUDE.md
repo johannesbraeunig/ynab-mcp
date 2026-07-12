@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project State
 
-An MCP server for YNAB (You Need A Budget). Currently implements read-only budget analysis tools only (`ynab_list_budgets`, `ynab_get_budget`, `ynab_list_accounts`, `ynab_list_categories`, `ynab_list_transactions`); category/transaction/account write tools are planned but not built. See [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and phased roadmap, and [README.md](README.md) for setup instructions.
+An MCP server for YNAB (You Need A Budget). Currently implements read-only budget analysis tools only (section A of the plan: `ynab_get_user`, `ynab_list_budgets`, `ynab_get_budget`, `ynab_get_budget_settings`, `ynab_list_accounts`, `ynab_get_account`, `ynab_list_categories`, `ynab_get_category`, `ynab_list_months`, `ynab_get_month`, `ynab_list_payees`, `ynab_get_payee`, `ynab_list_scheduled_transactions`, `ynab_list_transactions`, `ynab_get_spending_summary`); category/transaction/account write tools are planned but not built. See [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and phased roadmap, and [README.md](README.md) for setup instructions.
 
 ## Package Manager
 

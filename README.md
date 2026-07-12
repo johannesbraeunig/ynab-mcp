@@ -8,11 +8,21 @@ An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Ne
 
 | Tool | Description |
 | --- | --- |
+| `ynab_get_user` | Get the id of the authenticated user for the configured access token. |
 | `ynab_list_budgets` | List all budgets accessible to the configured access token. |
 | `ynab_get_budget` | Get an overview of one budget: metadata plus counts of accounts/categories/payees/transactions. Use the dedicated list tools below for the actual data. |
+| `ynab_get_budget_settings` | Get the date format and currency format settings for a budget. |
 | `ynab_list_accounts` | List accounts in a budget, with balances in milliunits. |
+| `ynab_get_account` | Get a single account by id. |
 | `ynab_list_categories` | List category groups and categories, with budgeted/activity/balance figures for the current month. |
+| `ynab_get_category` | Get a single category by id, including goal figures. |
+| `ynab_list_months` | List summary figures (income/budgeted/activity/to_be_budgeted) for every month in a budget's history. |
+| `ynab_get_month` | Get summary figures plus every category's budgeted/activity/balance for one budget month. |
+| `ynab_list_payees` | List all payees in a budget. |
+| `ynab_get_payee` | Get a single payee by id. |
+| `ynab_list_scheduled_transactions` | List upcoming scheduled (future-dated, recurring) transactions. |
 | `ynab_list_transactions` | List transactions in a budget, filterable by date range. Defaults to the last 30 days and returns at most 200 per call. |
+| `ynab_get_spending_summary` | Summarize spending (outflow) and income (inflow) per category over a date range, computed client-side from transactions. |
 
 All tools are read-only against your YNAB data — nothing in this server can currently modify your budget.
 

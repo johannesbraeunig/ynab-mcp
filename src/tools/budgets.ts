@@ -5,6 +5,21 @@ import { jsonToolResult, READ_ONLY, withYnabErrorHandling } from "./helpers.js";
 
 export function registerBudgetTools(server: McpServer, ynab: YnabClient): void {
   server.registerTool(
+    "ynab_get_user",
+    {
+      title: "Get YNAB user",
+      description: "Get the id of the authenticated user for the configured access token.",
+      inputSchema: {},
+      annotations: READ_ONLY,
+    },
+    async () =>
+      withYnabErrorHandling(async () => {
+        const user = await ynab.getUser();
+        return jsonToolResult({ id: user.id });
+      }),
+  );
+
+  server.registerTool(
     "ynab_list_budgets",
     {
       title: "List YNAB budgets",
@@ -57,6 +72,21 @@ export function registerBudgetTools(server: McpServer, ynab: YnabClient): void {
           transactions_count: count(budget.transactions),
           scheduled_transactions_count: count(budget.scheduled_transactions),
         });
+      }),
+  );
+
+  server.registerTool(
+    "ynab_get_budget_settings",
+    {
+      title: "Get YNAB budget settings",
+      description: "Get the date format and currency format settings for a budget.",
+      inputSchema: { budget_id: budgetIdSchema },
+      annotations: READ_ONLY,
+    },
+    async ({ budget_id }: { budget_id: string }) =>
+      withYnabErrorHandling(async () => {
+        const settings = await ynab.getBudgetSettings(budget_id);
+        return jsonToolResult(settings);
       }),
   );
 }

@@ -38,12 +38,31 @@ function fakeTransaction(overrides: Partial<TransactionDetail> = {}): Transactio
 
 function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
   return {
+    getUser: async () => ({ id: "u1" }),
     listBudgets: async () => [],
     getBudget: async () => {
       throw new Error("getBudget not implemented in this mock");
     },
+    getBudgetSettings: async () => {
+      throw new Error("getBudgetSettings not implemented in this mock");
+    },
     listAccounts: async () => [],
+    getAccount: async () => {
+      throw new Error("getAccount not implemented in this mock");
+    },
     listCategories: async () => [],
+    getCategory: async () => {
+      throw new Error("getCategory not implemented in this mock");
+    },
+    listMonths: async () => [],
+    getMonth: async () => {
+      throw new Error("getMonth not implemented in this mock");
+    },
+    listPayees: async () => [],
+    getPayee: async () => {
+      throw new Error("getPayee not implemented in this mock");
+    },
+    listScheduledTransactions: async () => [],
     listTransactions: async () => [],
     ...overrides,
   };
@@ -76,16 +95,26 @@ function textOf(content: unknown): string {
 }
 
 describe("MCP server", () => {
-  it("advertises all Phase 1 tools", async () => {
+  it("advertises all read-only analysis tools", async () => {
     const client = await connectedClient(mockYnabClient());
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "ynab_get_user",
         "ynab_list_budgets",
         "ynab_get_budget",
+        "ynab_get_budget_settings",
         "ynab_list_accounts",
+        "ynab_get_account",
         "ynab_list_categories",
+        "ynab_get_category",
+        "ynab_list_months",
+        "ynab_get_month",
+        "ynab_list_payees",
+        "ynab_get_payee",
+        "ynab_list_scheduled_transactions",
         "ynab_list_transactions",
+        "ynab_get_spending_summary",
       ].sort(),
     );
   });
@@ -199,5 +228,68 @@ describe("MCP server", () => {
     });
     expect(result.isError).toBe(true);
     expect(textOf(result.content)).toMatch(/YNAB_ACCESS_TOKEN/);
+  });
+
+  it("ynab_get_spending_summary aggregates outflow/inflow per category", async () => {
+    const client = await connectedClient(
+      mockYnabClient({
+        listTransactions: async () => [
+          fakeTransaction({
+            id: "t1",
+            category_id: "c1",
+            category_name: "Groceries",
+            amount: -50_000,
+          }),
+          fakeTransaction({
+            id: "t2",
+            category_id: "c1",
+            category_name: "Groceries",
+            amount: -25_000,
+          }),
+          fakeTransaction({ id: "t3", amount: -10_000 }),
+          fakeTransaction({
+            id: "t4",
+            category_id: "c2",
+            category_name: "Salary",
+            amount: 500_000,
+          }),
+          fakeTransaction({ id: "t5", deleted: true, category_id: "c1", amount: -999_000 }),
+        ],
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_get_spending_summary",
+      arguments: { budget_id: "last-used", since_date: "2026-01-01", until_date: "2026-01-31" },
+    });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed).toEqual({
+      since_date: "2026-01-01",
+      until_date: "2026-01-31",
+      categories: [
+        {
+          category_id: "c1",
+          category_name: "Groceries",
+          outflow: 75_000,
+          inflow: 0,
+          transaction_count: 2,
+        },
+        {
+          category_id: null,
+          category_name: null,
+          outflow: 10_000,
+          inflow: 0,
+          transaction_count: 1,
+        },
+        {
+          category_id: "c2",
+          category_name: "Salary",
+          outflow: 0,
+          inflow: 500_000,
+          transaction_count: 1,
+        },
+      ],
+    });
   });
 });
