@@ -2,7 +2,7 @@
 
 An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Need A Budget), so an LLM client such as Claude Desktop can analyze your budget, accounts, categories, and transactions.
 
-**Status: early work in progress.** Read-only budget analysis, category management, and transaction management tools are implemented so far. Account/budget setup tools are planned but not yet built — see [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and roadmap.
+**Status: early work in progress.** All planned tool areas are implemented: read-only budget analysis, category management, transaction management, and account/budget setup — see [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and the hardening work still planned before a 1.0.
 
 ## What it can do today
 
@@ -32,8 +32,11 @@ An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Ne
 | `ynab_create_transactions_bulk` | Create multiple transactions in one call. |
 | `ynab_update_transaction` | Update a transaction's account, date, amount, payee, category, memo, cleared status, and/or approved status — also covers approving and categorizing a transaction. |
 | `ynab_delete_transaction` | **Destructive.** Permanently delete a transaction. Requires `confirm: true`. |
+| `ynab_create_account` | Create a new on-budget account. |
+| `ynab_create_payee` | Create a new payee. |
+| `ynab_update_payee` | Rename an existing payee. |
 
-The tools above are the only ones implemented — nothing in this server can create, modify, or delete accounts or payees yet. There is intentionally no `ynab_delete_category`: YNAB's public API has no delete endpoint for categories and no way to hide one via the API either, so that action isn't possible through this server (or any other API client).
+There is intentionally no `ynab_delete_category` and no `ynab_close_account`/`ynab_update_account`: YNAB's public API has no delete endpoint for categories, no `hidden` field to hide one either, and no update or close endpoint for accounts at all — `AccountsApi` in the underlying SDK only exposes create/get/list. Once you create an account or category with this server, there's no way to close, hide, or delete it through the API (or any other API client) — you'd need to do that from the YNAB app itself.
 
 ## Setup
 

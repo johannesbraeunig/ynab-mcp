@@ -50,6 +50,9 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     getAccount: async () => {
       throw new Error("getAccount not implemented in this mock");
     },
+    createAccount: async () => {
+      throw new Error("createAccount not implemented in this mock");
+    },
     listCategories: async () => [],
     getCategory: async () => {
       throw new Error("getCategory not implemented in this mock");
@@ -76,6 +79,12 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     listPayees: async () => [],
     getPayee: async () => {
       throw new Error("getPayee not implemented in this mock");
+    },
+    createPayee: async () => {
+      throw new Error("createPayee not implemented in this mock");
+    },
+    updatePayee: async () => {
+      throw new Error("updatePayee not implemented in this mock");
     },
     listScheduledTransactions: async () => [],
     listTransactions: async () => [],
@@ -133,6 +142,7 @@ describe("MCP server", () => {
         "ynab_get_budget_settings",
         "ynab_list_accounts",
         "ynab_get_account",
+        "ynab_create_account",
         "ynab_list_categories",
         "ynab_get_category",
         "ynab_create_category_group",
@@ -144,6 +154,8 @@ describe("MCP server", () => {
         "ynab_get_month",
         "ynab_list_payees",
         "ynab_get_payee",
+        "ynab_create_payee",
+        "ynab_update_payee",
         "ynab_list_scheduled_transactions",
         "ynab_list_transactions",
         "ynab_get_spending_summary",
@@ -490,5 +502,70 @@ describe("MCP server", () => {
     expect(result.isError).toBeFalsy();
     const parsed = JSON.parse(textOf(result.content));
     expect(parsed.id).toBe("t1");
+  });
+
+  it("ynab_create_account passes the type and starting balance through unchanged", async () => {
+    let receivedInput: unknown;
+    const client = await connectedClient(
+      mockYnabClient({
+        createAccount: async (budgetId, input) => {
+          receivedInput = { budgetId, input };
+          return fakeAccount({
+            id: "a1",
+            name: input.name,
+            type: input.type,
+            balance: input.balance,
+          });
+        },
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_create_account",
+      arguments: {
+        budget_id: "last-used",
+        name: "New Checking",
+        type: "checking",
+        balance: 100_000,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedInput).toEqual({
+      budgetId: "last-used",
+      input: { name: "New Checking", type: "checking", balance: 100_000 },
+    });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed).toMatchObject({
+      id: "a1",
+      name: "New Checking",
+      type: "checking",
+      balance: 100_000,
+    });
+  });
+
+  it("ynab_create_payee and ynab_update_payee round-trip the payee name", async () => {
+    const client = await connectedClient(
+      mockYnabClient({
+        createPayee: async (_budgetId, name) => ({ id: "p1", name, deleted: false }),
+        updatePayee: async (_budgetId, payeeId, name) => ({ id: payeeId, name, deleted: false }),
+      }),
+    );
+
+    const created = await client.callTool({
+      name: "ynab_create_payee",
+      arguments: { budget_id: "last-used", name: "Corner Store" },
+    });
+    expect(created.isError).toBeFalsy();
+    expect(JSON.parse(textOf(created.content))).toMatchObject({ id: "p1", name: "Corner Store" });
+
+    const updated = await client.callTool({
+      name: "ynab_update_payee",
+      arguments: { budget_id: "last-used", payee_id: "p1", name: "Corner Store Renamed" },
+    });
+    expect(updated.isError).toBeFalsy();
+    expect(JSON.parse(textOf(updated.content))).toMatchObject({
+      id: "p1",
+      name: "Corner Store Renamed",
+    });
   });
 });

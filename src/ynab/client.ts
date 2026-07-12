@@ -29,6 +29,20 @@ export interface CategoryUpdateInput {
 
 export type ClearedStatus = "cleared" | "uncleared" | "reconciled";
 
+export type AccountType =
+  | "checking"
+  | "savings"
+  | "cash"
+  | "creditCard"
+  | "otherAsset"
+  | "otherLiability";
+
+export interface NewAccountInput {
+  name: string;
+  type: AccountType;
+  balance: number;
+}
+
 export interface NewTransactionInput {
   accountId: string;
   date: string;
@@ -67,6 +81,7 @@ export interface YnabClient {
   getBudgetSettings(budgetId: string): Promise<PlanSettings>;
   listAccounts(budgetId: string): Promise<Account[]>;
   getAccount(budgetId: string, accountId: string): Promise<Account>;
+  createAccount(budgetId: string, input: NewAccountInput): Promise<Account>;
   listCategories(budgetId: string): Promise<CategoryGroupWithCategories[]>;
   getCategory(budgetId: string, categoryId: string): Promise<Category>;
   createCategoryGroup(budgetId: string, name: string): Promise<CategoryGroup>;
@@ -91,6 +106,8 @@ export interface YnabClient {
   getMonth(budgetId: string, month: string): Promise<MonthDetail>;
   listPayees(budgetId: string): Promise<Payee[]>;
   getPayee(budgetId: string, payeeId: string): Promise<Payee>;
+  createPayee(budgetId: string, name: string): Promise<Payee>;
+  updatePayee(budgetId: string, payeeId: string, name: string): Promise<Payee>;
   listScheduledTransactions(budgetId: string): Promise<ScheduledTransactionDetail[]>;
   listTransactions(
     budgetId: string,
@@ -140,6 +157,13 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
 
     async getAccount(budgetId, accountId) {
       const res = await api.accounts.getAccountById(budgetId, accountId);
+      return res.data.account;
+    },
+
+    async createAccount(budgetId, input) {
+      const res = await api.accounts.createAccount(budgetId, {
+        account: { name: input.name, type: input.type, balance: input.balance },
+      });
       return res.data.account;
     },
 
@@ -213,6 +237,16 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
 
     async getPayee(budgetId, payeeId) {
       const res = await api.payees.getPayeeById(budgetId, payeeId);
+      return res.data.payee;
+    },
+
+    async createPayee(budgetId, name) {
+      const res = await api.payees.createPayee(budgetId, { payee: { name } });
+      return res.data.payee;
+    },
+
+    async updatePayee(budgetId, payeeId, name) {
+      const res = await api.payees.updatePayee(budgetId, payeeId, { payee: { name } });
       return res.data.payee;
     },
 
