@@ -102,6 +102,8 @@ pnpm format      # oxfmt
 pnpm test        # unit + integration tests (vitest)
 ```
 
+The integration tests (`test/integration/server.test.ts`) run the real MCP server against the real `ynab` SDK, with [MSW](https://mswjs.io/) mocking the underlying HTTP calls to `api.ynab.com` — no live network access or real YNAB account needed to run `pnpm test`.
+
 `pnpm test:live` is reserved for opt-in tests against a real YNAB account (gated behind env vars, excluded from `pnpm test`) as described in the design plan, but that test suite hasn't been written yet — running it today will just report "no test files found."
 
 The one piece of hardening not yet done is a manual end-to-end pass through Claude Desktop against a real budget (see "Configure Claude Desktop" above) — everything else is covered by the automated test suite and mocked YNAB responses.
