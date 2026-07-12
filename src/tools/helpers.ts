@@ -8,6 +8,20 @@ export const READ_ONLY: ToolAnnotations = {
   openWorldHint: true,
 };
 
+export const CREATES: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+
+export const UPDATES: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+};
+
 export function jsonToolResult(data: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }

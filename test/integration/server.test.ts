@@ -54,6 +54,21 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     getCategory: async () => {
       throw new Error("getCategory not implemented in this mock");
     },
+    createCategoryGroup: async () => {
+      throw new Error("createCategoryGroup not implemented in this mock");
+    },
+    updateCategoryGroup: async () => {
+      throw new Error("updateCategoryGroup not implemented in this mock");
+    },
+    createCategory: async () => {
+      throw new Error("createCategory not implemented in this mock");
+    },
+    updateCategory: async () => {
+      throw new Error("updateCategory not implemented in this mock");
+    },
+    assignBudgetedAmount: async () => {
+      throw new Error("assignBudgetedAmount not implemented in this mock");
+    },
     listMonths: async () => [],
     getMonth: async () => {
       throw new Error("getMonth not implemented in this mock");
@@ -95,7 +110,7 @@ function textOf(content: unknown): string {
 }
 
 describe("MCP server", () => {
-  it("advertises all read-only analysis tools", async () => {
+  it("advertises all implemented tools", async () => {
     const client = await connectedClient(mockYnabClient());
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -108,6 +123,11 @@ describe("MCP server", () => {
         "ynab_get_account",
         "ynab_list_categories",
         "ynab_get_category",
+        "ynab_create_category_group",
+        "ynab_update_category_group",
+        "ynab_create_category",
+        "ynab_update_category",
+        "ynab_assign_budgeted_amount",
         "ynab_list_months",
         "ynab_get_month",
         "ynab_list_payees",
@@ -291,5 +311,96 @@ describe("MCP server", () => {
         },
       ],
     });
+  });
+
+  it("ynab_create_category creates a category via the category group id and echoes the created fields", async () => {
+    let receivedInput: unknown;
+    const client = await connectedClient(
+      mockYnabClient({
+        createCategory: async (budgetId, input) => {
+          receivedInput = { budgetId, input };
+          return {
+            id: "c1",
+            category_group_id: input.categoryGroupId,
+            name: input.name,
+            hidden: false,
+            internal: false,
+            budgeted: 0,
+            activity: 0,
+            balance: 0,
+            deleted: false,
+            ...(input.note !== undefined && { note: input.note }),
+          };
+        },
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_create_category",
+      arguments: {
+        budget_id: "last-used",
+        category_group_id: "cg1",
+        name: "Groceries",
+        note: "weekly shop",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedInput).toEqual({
+      budgetId: "last-used",
+      input: { categoryGroupId: "cg1", name: "Groceries", note: "weekly shop" },
+    });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed).toEqual({
+      id: "c1",
+      category_group_id: "cg1",
+      category_group_name: undefined,
+      name: "Groceries",
+      hidden: false,
+      note: "weekly shop",
+      budgeted: 0,
+      activity: 0,
+      balance: 0,
+    });
+  });
+
+  it("ynab_assign_budgeted_amount passes the milliunits amount through unchanged", async () => {
+    let received: unknown;
+    const client = await connectedClient(
+      mockYnabClient({
+        assignBudgetedAmount: async (budgetId, month, categoryId, budgeted) => {
+          received = { budgetId, month, categoryId, budgeted };
+          return {
+            id: categoryId,
+            category_group_id: "cg1",
+            name: "Groceries",
+            hidden: false,
+            internal: false,
+            budgeted,
+            activity: 0,
+            balance: budgeted,
+            deleted: false,
+          };
+        },
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_assign_budgeted_amount",
+      arguments: {
+        budget_id: "last-used",
+        month: "2026-07-01",
+        category_id: "c1",
+        budgeted: 50_000,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(received).toEqual({
+      budgetId: "last-used",
+      month: "2026-07-01",
+      categoryId: "c1",
+      budgeted: 50_000,
+    });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.budgeted).toBe(50_000);
   });
 });

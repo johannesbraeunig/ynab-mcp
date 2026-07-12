@@ -2,6 +2,7 @@ import * as ynab from "ynab";
 import type {
   Account,
   Category,
+  CategoryGroup,
   CategoryGroupWithCategories,
   MonthDetail,
   MonthSummary,
@@ -13,6 +14,18 @@ import type {
   TransactionDetail,
   User,
 } from "ynab";
+
+export interface NewCategoryInput {
+  categoryGroupId: string;
+  name: string;
+  note?: string;
+}
+
+export interface CategoryUpdateInput {
+  name?: string;
+  note?: string;
+  categoryGroupId?: string;
+}
 
 /**
  * Narrow, stable interface every tool depends on. Tool-facing vocabulary is
@@ -30,6 +43,24 @@ export interface YnabClient {
   getAccount(budgetId: string, accountId: string): Promise<Account>;
   listCategories(budgetId: string): Promise<CategoryGroupWithCategories[]>;
   getCategory(budgetId: string, categoryId: string): Promise<Category>;
+  createCategoryGroup(budgetId: string, name: string): Promise<CategoryGroup>;
+  updateCategoryGroup(
+    budgetId: string,
+    categoryGroupId: string,
+    name: string,
+  ): Promise<CategoryGroup>;
+  createCategory(budgetId: string, input: NewCategoryInput): Promise<Category>;
+  updateCategory(
+    budgetId: string,
+    categoryId: string,
+    input: CategoryUpdateInput,
+  ): Promise<Category>;
+  assignBudgetedAmount(
+    budgetId: string,
+    month: string,
+    categoryId: string,
+    budgeted: number,
+  ): Promise<Category>;
   listMonths(budgetId: string): Promise<MonthSummary[]>;
   getMonth(budgetId: string, month: string): Promise<MonthDetail>;
   listPayees(budgetId: string): Promise<Payee[]>;
@@ -82,6 +113,49 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
 
     async getCategory(budgetId, categoryId) {
       const res = await api.categories.getCategoryById(budgetId, categoryId);
+      return res.data.category;
+    },
+
+    async createCategoryGroup(budgetId, name) {
+      const res = await api.categories.createCategoryGroup(budgetId, {
+        category_group: { name },
+      });
+      return res.data.category_group;
+    },
+
+    async updateCategoryGroup(budgetId, categoryGroupId, name) {
+      const res = await api.categories.updateCategoryGroup(budgetId, categoryGroupId, {
+        category_group: { name },
+      });
+      return res.data.category_group;
+    },
+
+    async createCategory(budgetId, input) {
+      const res = await api.categories.createCategory(budgetId, {
+        category: {
+          category_group_id: input.categoryGroupId,
+          name: input.name,
+          ...(input.note !== undefined && { note: input.note }),
+        },
+      });
+      return res.data.category;
+    },
+
+    async updateCategory(budgetId, categoryId, input) {
+      const res = await api.categories.updateCategory(budgetId, categoryId, {
+        category: {
+          ...(input.name !== undefined && { name: input.name }),
+          ...(input.note !== undefined && { note: input.note }),
+          ...(input.categoryGroupId !== undefined && { category_group_id: input.categoryGroupId }),
+        },
+      });
+      return res.data.category;
+    },
+
+    async assignBudgetedAmount(budgetId, month, categoryId, budgeted) {
+      const res = await api.categories.updateMonthCategory(budgetId, month, categoryId, {
+        category: { budgeted },
+      });
       return res.data.category;
     },
 
