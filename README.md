@@ -2,7 +2,7 @@
 
 An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Need A Budget), so an LLM client such as Claude Desktop can analyze your budget, accounts, categories, and transactions.
 
-**Status: early work in progress.** Read-only budget analysis and category management tools are implemented so far. Transaction management and account/budget setup tools are planned but not yet built — see [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and roadmap.
+**Status: early work in progress.** Read-only budget analysis, category management, and transaction management tools are implemented so far. Account/budget setup tools are planned but not yet built — see [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design and roadmap.
 
 ## What it can do today
 
@@ -28,8 +28,12 @@ An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Ne
 | `ynab_create_category` | Create a new category within an existing category group. |
 | `ynab_update_category` | Update a category's name, note, and/or category group. |
 | `ynab_assign_budgeted_amount` | Set the budgeted (assigned) amount for a category in a specific month — the "assign money" action. |
+| `ynab_create_transaction` | Create a single transaction. |
+| `ynab_create_transactions_bulk` | Create multiple transactions in one call. |
+| `ynab_update_transaction` | Update a transaction's account, date, amount, payee, category, memo, cleared status, and/or approved status — also covers approving and categorizing a transaction. |
+| `ynab_delete_transaction` | **Destructive.** Permanently delete a transaction. Requires `confirm: true`. |
 
-The tools above are the only ones implemented — nothing in this server can create, modify, or delete accounts, transactions, or payees yet. There is intentionally no `ynab_delete_category`: YNAB's public API has no delete endpoint for categories and no way to hide one via the API either, so that action isn't possible through this server (or any other API client).
+The tools above are the only ones implemented — nothing in this server can create, modify, or delete accounts or payees yet. There is intentionally no `ynab_delete_category`: YNAB's public API has no delete endpoint for categories and no way to hide one via the API either, so that action isn't possible through this server (or any other API client).
 
 ## Setup
 
@@ -77,8 +81,8 @@ Restart Claude Desktop and the `ynab_*` tools should be available.
 
 ## Safety
 
-- Category management tools can create and modify categories and category groups, and can reassign a category's budgeted amount for a month. None of this is destructive in the "data loss" sense (nothing can currently be deleted), but it does modify your live budget.
-- Once destructive tools are added (e.g. deleting a transaction), they will require an explicit confirmation field in the tool call and will be marked with MCP's `destructiveHint` annotation — see the [security notes in the design plan](docs/plans/ynab-mcp-server-plan.md#security-notes) for the intended safeguards. Create/update tools are marked `readOnlyHint: false` but not `destructiveHint`, matching MCP's annotation semantics.
+- Category and transaction management tools create and modify data in your live budget. Create/update tools are annotated `readOnlyHint: false`, `destructiveHint: false` (data isn't lost, just changed).
+- `ynab_delete_transaction` is the one destructive tool implemented so far: it's annotated `destructiveHint: true`, requires an explicit `confirm: true` field in the tool call (calls without it are rejected before any request reaches YNAB), and returns the deleted transaction's fields in the result so the call is auditable afterwards. See the [security notes in the design plan](docs/plans/ynab-mcp-server-plan.md#security-notes) for the full intended safeguards, including that host-level tool-call approval (e.g. in Claude Desktop) remains the primary line of defense — the `confirm` field is defense-in-depth, not a substitute for it.
 - Your access token is read once from the `YNAB_ACCESS_TOKEN` environment variable at startup and is never logged or written to disk by this server.
 
 ## Development

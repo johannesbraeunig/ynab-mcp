@@ -27,6 +27,32 @@ export interface CategoryUpdateInput {
   categoryGroupId?: string;
 }
 
+export type ClearedStatus = "cleared" | "uncleared" | "reconciled";
+
+export interface NewTransactionInput {
+  accountId: string;
+  date: string;
+  amount: number;
+  payeeId?: string;
+  payeeName?: string;
+  categoryId?: string;
+  memo?: string;
+  cleared?: ClearedStatus;
+  approved?: boolean;
+}
+
+export interface TransactionUpdateInput {
+  accountId?: string;
+  date?: string;
+  amount?: number;
+  payeeId?: string;
+  payeeName?: string;
+  categoryId?: string;
+  memo?: string;
+  cleared?: ClearedStatus;
+  approved?: boolean;
+}
+
 /**
  * Narrow, stable interface every tool depends on. Tool-facing vocabulary is
  * "budget" throughout (matches the YNAB product and this server's tool
@@ -70,6 +96,17 @@ export interface YnabClient {
     budgetId: string,
     options?: { sinceDate?: string; untilDate?: string },
   ): Promise<TransactionDetail[]>;
+  createTransaction(budgetId: string, input: NewTransactionInput): Promise<TransactionDetail>;
+  createTransactionsBulk(
+    budgetId: string,
+    inputs: NewTransactionInput[],
+  ): Promise<TransactionDetail[]>;
+  updateTransaction(
+    budgetId: string,
+    transactionId: string,
+    input: TransactionUpdateInput,
+  ): Promise<TransactionDetail>;
+  deleteTransaction(budgetId: string, transactionId: string): Promise<TransactionDetail>;
 }
 
 export function createYnabClient(accessToken: string, apiBaseUrl?: string): YnabClient {
@@ -192,5 +229,62 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       );
       return res.data.transactions;
     },
+
+    async createTransaction(budgetId, input) {
+      const res = await api.transactions.createTransaction(budgetId, {
+        transaction: newTransactionToSdk(input),
+      });
+      if (res.data.transaction === undefined) {
+        throw new Error("YNAB API did not return the created transaction.");
+      }
+      return res.data.transaction;
+    },
+
+    async createTransactionsBulk(budgetId, inputs) {
+      const res = await api.transactions.createTransaction(budgetId, {
+        transactions: inputs.map(newTransactionToSdk),
+      });
+      return res.data.transactions ?? [];
+    },
+
+    async updateTransaction(budgetId, transactionId, input) {
+      const res = await api.transactions.updateTransaction(budgetId, transactionId, {
+        transaction: transactionUpdateToSdk(input),
+      });
+      return res.data.transaction;
+    },
+
+    async deleteTransaction(budgetId, transactionId) {
+      const res = await api.transactions.deleteTransaction(budgetId, transactionId);
+      return res.data.transaction;
+    },
+  };
+}
+
+function newTransactionToSdk(input: NewTransactionInput): ynab.NewTransaction {
+  return {
+    account_id: input.accountId,
+    date: input.date,
+    amount: input.amount,
+    ...(input.payeeId !== undefined && { payee_id: input.payeeId }),
+    ...(input.payeeName !== undefined && { payee_name: input.payeeName }),
+    ...(input.categoryId !== undefined && { category_id: input.categoryId }),
+    ...(input.memo !== undefined && { memo: input.memo }),
+    ...(input.cleared !== undefined && { cleared: input.cleared }),
+    ...(input.approved !== undefined && { approved: input.approved }),
+  };
+}
+
+function transactionUpdateToSdk(input: TransactionUpdateInput): ynab.ExistingTransaction {
+  return {
+    ...(input.accountId !== undefined && { account_id: input.accountId }),
+    ...(input.date !== undefined && { date: input.date }),
+    ...(input.amount !== undefined && { amount: input.amount }),
+    ...(input.payeeId !== undefined && { payee_id: input.payeeId }),
+    ...(input.payeeName !== undefined && { payee_name: input.payeeName }),
+    ...(input.categoryId !== undefined && { category_id: input.categoryId }),
+    ...(input.memo !== undefined && { memo: input.memo }),
+    ...(input.cleared !== undefined && { cleared: input.cleared }),
+    ...(input.approved !== undefined && { approved: input.approved }),
   };
 }

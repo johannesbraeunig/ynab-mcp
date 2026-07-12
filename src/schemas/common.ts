@@ -25,3 +25,7 @@ export const monthSchema = z
 export const confirmSchema = z
   .literal(true)
   .describe("Must be explicitly set to true to confirm this destructive action");
+
+export const clearedStatusSchema = z
+  .enum(["cleared", "uncleared", "reconciled"])
+  .describe("The cleared status of the transaction");

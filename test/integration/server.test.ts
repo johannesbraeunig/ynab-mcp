@@ -79,6 +79,18 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     },
     listScheduledTransactions: async () => [],
     listTransactions: async () => [],
+    createTransaction: async () => {
+      throw new Error("createTransaction not implemented in this mock");
+    },
+    createTransactionsBulk: async () => {
+      throw new Error("createTransactionsBulk not implemented in this mock");
+    },
+    updateTransaction: async () => {
+      throw new Error("updateTransaction not implemented in this mock");
+    },
+    deleteTransaction: async () => {
+      throw new Error("deleteTransaction not implemented in this mock");
+    },
     ...overrides,
   };
 }
@@ -135,6 +147,10 @@ describe("MCP server", () => {
         "ynab_list_scheduled_transactions",
         "ynab_list_transactions",
         "ynab_get_spending_summary",
+        "ynab_create_transaction",
+        "ynab_create_transactions_bulk",
+        "ynab_update_transaction",
+        "ynab_delete_transaction",
       ].sort(),
     );
   });
@@ -402,5 +418,77 @@ describe("MCP server", () => {
     });
     const parsed = JSON.parse(textOf(result.content));
     expect(parsed.budgeted).toBe(50_000);
+  });
+
+  it("ynab_create_transaction passes amount/fields through unchanged and echoes the created transaction", async () => {
+    let receivedInput: unknown;
+    const client = await connectedClient(
+      mockYnabClient({
+        createTransaction: async (budgetId, input) => {
+          receivedInput = { budgetId, input };
+          return fakeTransaction({
+            id: "t1",
+            account_id: input.accountId,
+            date: input.date,
+            amount: input.amount,
+            ...(input.categoryId !== undefined && { category_id: input.categoryId }),
+          });
+        },
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_create_transaction",
+      arguments: {
+        budget_id: "last-used",
+        account_id: "a1",
+        date: "2026-07-01",
+        amount: -25_000,
+        category_id: "c1",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedInput).toEqual({
+      budgetId: "last-used",
+      input: { accountId: "a1", date: "2026-07-01", amount: -25_000, categoryId: "c1" },
+    });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed).toMatchObject({ id: "t1", date: "2026-07-01", amount: -25_000 });
+  });
+
+  it("rejects ynab_delete_transaction when confirm is not explicitly true, without calling the YNAB client", async () => {
+    let called = false;
+    const client = await connectedClient(
+      mockYnabClient({
+        deleteTransaction: async () => {
+          called = true;
+          return fakeTransaction();
+        },
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_delete_transaction",
+      arguments: { budget_id: "last-used", transaction_id: "t1", confirm: false },
+    });
+    expect(result.isError).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it("ynab_delete_transaction deletes and echoes the deleted transaction when confirm is true", async () => {
+    const client = await connectedClient(
+      mockYnabClient({
+        deleteTransaction: async (budgetId, transactionId) =>
+          fakeTransaction({ id: transactionId, deleted: true }),
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_delete_transaction",
+      arguments: { budget_id: "last-used", transaction_id: "t1", confirm: true },
+    });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.id).toBe("t1");
   });
 });
