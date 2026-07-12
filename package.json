@@ -1,0 +1,53 @@
+{
+  "name": "ynab-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for YNAB (You Need A Budget)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ynab-mcp": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch --onSuccess \"node dist/index.js\"",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src test",
+    "format": "oxfmt src test",
+    "test": "vitest run --exclude 'test/live/**'",
+    "test:watch": "vitest",
+    "test:live": "vitest run test/live"
+  },
+  "keywords": [
+    "mcp",
+    "ynab",
+    "budget"
+  ],
+  "author": "Johannes Bräunig",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johannesbraeunig/ynab-mcp.git"
+  },
+  "homepage": "https://github.com/johannesbraeunig/ynab-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/johannesbraeunig/ynab-mcp/issues"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ynab": "^4.5.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
