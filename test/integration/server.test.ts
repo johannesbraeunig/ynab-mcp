@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../../src/server.js";
-import type { YnabClient } from "../../src/ynab/client.js";
+import type { ListResult, YnabClient } from "../../src/ynab/client.js";
 import type { Account, PlanSummary, TransactionDetail } from "ynab";
+
+function emptyList<T>(): ListResult<T> {
+  return { items: [], serverKnowledge: 0 };
+}
 
 function fakeAccount(overrides: Partial<Account> = {}): Account {
   return {
@@ -46,14 +50,14 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     getBudgetSettings: async () => {
       throw new Error("getBudgetSettings not implemented in this mock");
     },
-    listAccounts: async () => [],
+    listAccounts: async () => emptyList(),
     getAccount: async () => {
       throw new Error("getAccount not implemented in this mock");
     },
     createAccount: async () => {
       throw new Error("createAccount not implemented in this mock");
     },
-    listCategories: async () => [],
+    listCategories: async () => emptyList(),
     getCategory: async () => {
       throw new Error("getCategory not implemented in this mock");
     },
@@ -72,11 +76,11 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     assignBudgetedAmount: async () => {
       throw new Error("assignBudgetedAmount not implemented in this mock");
     },
-    listMonths: async () => [],
+    listMonths: async () => emptyList(),
     getMonth: async () => {
       throw new Error("getMonth not implemented in this mock");
     },
-    listPayees: async () => [],
+    listPayees: async () => emptyList(),
     getPayee: async () => {
       throw new Error("getPayee not implemented in this mock");
     },
@@ -86,8 +90,8 @@ function mockYnabClient(overrides: Partial<YnabClient> = {}): YnabClient {
     updatePayee: async () => {
       throw new Error("updatePayee not implemented in this mock");
     },
-    listScheduledTransactions: async () => [],
-    listTransactions: async () => [],
+    listScheduledTransactions: async () => emptyList(),
+    listTransactions: async () => emptyList(),
     createTransaction: async () => {
       throw new Error("createTransaction not implemented in this mock");
     },
@@ -208,7 +212,7 @@ describe("MCP server", () => {
       mockYnabClient({
         listTransactions: async () => {
           called = true;
-          return [];
+          return emptyList();
         },
       }),
     );
@@ -281,28 +285,31 @@ describe("MCP server", () => {
   it("ynab_get_spending_summary aggregates outflow/inflow per category", async () => {
     const client = await connectedClient(
       mockYnabClient({
-        listTransactions: async () => [
-          fakeTransaction({
-            id: "t1",
-            category_id: "c1",
-            category_name: "Groceries",
-            amount: -50_000,
-          }),
-          fakeTransaction({
-            id: "t2",
-            category_id: "c1",
-            category_name: "Groceries",
-            amount: -25_000,
-          }),
-          fakeTransaction({ id: "t3", amount: -10_000 }),
-          fakeTransaction({
-            id: "t4",
-            category_id: "c2",
-            category_name: "Salary",
-            amount: 500_000,
-          }),
-          fakeTransaction({ id: "t5", deleted: true, category_id: "c1", amount: -999_000 }),
-        ],
+        listTransactions: async () => ({
+          items: [
+            fakeTransaction({
+              id: "t1",
+              category_id: "c1",
+              category_name: "Groceries",
+              amount: -50_000,
+            }),
+            fakeTransaction({
+              id: "t2",
+              category_id: "c1",
+              category_name: "Groceries",
+              amount: -25_000,
+            }),
+            fakeTransaction({ id: "t3", amount: -10_000 }),
+            fakeTransaction({
+              id: "t4",
+              category_id: "c2",
+              category_name: "Salary",
+              amount: 500_000,
+            }),
+            fakeTransaction({ id: "t5", deleted: true, category_id: "c1", amount: -999_000 }),
+          ],
+          serverKnowledge: 0,
+        }),
       }),
     );
 
@@ -567,5 +574,26 @@ describe("MCP server", () => {
       id: "p1",
       name: "Corner Store Renamed",
     });
+  });
+
+  it("ynab_list_transactions passes last_knowledge_of_server through and returns the new server_knowledge cursor", async () => {
+    let receivedOptions: unknown;
+    const client = await connectedClient(
+      mockYnabClient({
+        listTransactions: async (_budgetId, options) => {
+          receivedOptions = options;
+          return { items: [fakeTransaction({ id: "t1" })], serverKnowledge: 42 };
+        },
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "ynab_list_transactions",
+      arguments: { budget_id: "last-used", last_knowledge_of_server: 17 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedOptions).toMatchObject({ lastKnowledgeOfServer: 17 });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.server_knowledge).toBe(42);
   });
 });

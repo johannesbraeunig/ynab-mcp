@@ -12,16 +12,16 @@ An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Ne
 | `ynab_list_budgets` | List all budgets accessible to the configured access token. |
 | `ynab_get_budget` | Get an overview of one budget: metadata plus counts of accounts/categories/payees/transactions. Use the dedicated list tools below for the actual data. |
 | `ynab_get_budget_settings` | Get the date format and currency format settings for a budget. |
-| `ynab_list_accounts` | List accounts in a budget, with balances in milliunits. |
+| `ynab_list_accounts` | List accounts in a budget, with balances in milliunits. Supports `last_knowledge_of_server` for delta sync. |
 | `ynab_get_account` | Get a single account by id. |
-| `ynab_list_categories` | List category groups and categories, with budgeted/activity/balance figures for the current month. |
+| `ynab_list_categories` | List category groups and categories, with budgeted/activity/balance figures for the current month. Supports `last_knowledge_of_server` for delta sync. |
 | `ynab_get_category` | Get a single category by id, including goal figures. |
-| `ynab_list_months` | List summary figures (income/budgeted/activity/to_be_budgeted) for every month in a budget's history. |
+| `ynab_list_months` | List summary figures (income/budgeted/activity/to_be_budgeted) for every month in a budget's history. Supports `last_knowledge_of_server` for delta sync. |
 | `ynab_get_month` | Get summary figures plus every category's budgeted/activity/balance for one budget month. |
-| `ynab_list_payees` | List all payees in a budget. |
+| `ynab_list_payees` | List all payees in a budget. Supports `last_knowledge_of_server` for delta sync. |
 | `ynab_get_payee` | Get a single payee by id. |
-| `ynab_list_scheduled_transactions` | List upcoming scheduled (future-dated, recurring) transactions. |
-| `ynab_list_transactions` | List transactions in a budget, filterable by date range. Defaults to the last 30 days and returns at most 200 per call. |
+| `ynab_list_scheduled_transactions` | List upcoming scheduled (future-dated, recurring) transactions. Supports `last_knowledge_of_server` for delta sync. |
+| `ynab_list_transactions` | List transactions in a budget, filterable by date range. Defaults to the last 30 days and returns at most 200 per call. Supports `last_knowledge_of_server` for delta sync. |
 | `ynab_get_spending_summary` | Summarize spending (outflow) and income (inflow) per category over a date range, computed client-side from transactions. |
 | `ynab_create_category_group` | Create a new category group. |
 | `ynab_update_category_group` | Rename an existing category group. |
@@ -37,6 +37,10 @@ An MCP (Model Context Protocol) server for [YNAB](https://www.ynab.com/) (You Ne
 | `ynab_update_payee` | Rename an existing payee. |
 
 There is intentionally no `ynab_delete_category` and no `ynab_close_account`/`ynab_update_account`: YNAB's public API has no delete endpoint for categories, no `hidden` field to hide one either, and no update or close endpoint for accounts at all — `AccountsApi` in the underlying SDK only exposes create/get/list. Once you create an account or category with this server, there's no way to close, hide, or delete it through the API (or any other API client) — you'd need to do that from the YNAB app itself.
+
+**Delta sync**: the list tools marked above accept an optional `last_knowledge_of_server` input and always return a `server_knowledge` value in their result. Save that value and pass it back in on your next call to that tool to receive only the entities that changed since then, instead of re-fetching the whole collection — useful if you're polling the same budget repeatedly and want to stay well under YNAB's 200-requests/hour rate limit.
+
+**Error messages**: every tool error includes a short note on whether retrying makes sense — rate-limit (429) and network errors say to back off and retry later, everything else (bad ids, auth failures, validation errors) says retrying the same call won't help and what to check instead.
 
 ## Setup
 
@@ -99,6 +103,8 @@ pnpm test        # unit + integration tests (vitest)
 ```
 
 `pnpm test:live` is reserved for opt-in tests against a real YNAB account (gated behind env vars, excluded from `pnpm test`) as described in the design plan, but that test suite hasn't been written yet — running it today will just report "no test files found."
+
+The one piece of hardening not yet done is a manual end-to-end pass through Claude Desktop against a real budget (see "Configure Claude Desktop" above) — everything else is covered by the automated test suite and mocked YNAB responses.
 
 See [CLAUDE.md](CLAUDE.md) for architecture notes and [docs/plans/ynab-mcp-server-plan.md](docs/plans/ynab-mcp-server-plan.md) for the full design plan, including the phased roadmap for write tools.
 

@@ -29,3 +29,11 @@ export const confirmSchema = z
 export const clearedStatusSchema = z
   .enum(["cleared", "uncleared", "reconciled"])
   .describe("The cleared status of the transaction");
+
+export const lastKnowledgeOfServerSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .describe(
+    "Delta sync cursor: pass the server_knowledge value from a previous call to this tool to receive only entities that changed since then, instead of the full collection. Omit for a full fetch.",
+  );

@@ -6,6 +6,7 @@ import {
   clearedStatusSchema,
   confirmSchema,
   isoDateSchema,
+  lastKnowledgeOfServerSchema,
   milliunitsSchema,
 } from "../schemas/common.js";
 import { milliunitsBrand } from "../ynab/types.js";
@@ -93,7 +94,8 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
       title: "List YNAB transactions",
       description:
         `List transactions in a budget. Defaults to the last ${DEFAULT_WINDOW_DAYS} days if since_date is not given, and returns at most ${MAX_RESULTS} transactions per call (most recent first) with has_more indicating whether more exist for the window. ` +
-        `Note: the YNAB API has no result-count limit of its own, so this tool always fetches every transaction in the requested date range before applying the ${MAX_RESULTS}-result cap — narrow the date range for large or long-lived budgets rather than requesting everything at once, both to keep the response small and to avoid burning YNAB's 200-requests/hour rate limit on an oversized fetch.`,
+        `Note: the YNAB API has no result-count limit of its own, so this tool always fetches every transaction in the requested date range before applying the ${MAX_RESULTS}-result cap — narrow the date range for large or long-lived budgets rather than requesting everything at once, both to keep the response small and to avoid burning YNAB's 200-requests/hour rate limit on an oversized fetch. ` +
+        "For repeated polling of the same budget, prefer last_knowledge_of_server over re-fetching the full date range each time.",
       inputSchema: {
         budget_id: budgetIdSchema,
         since_date: isoDateSchema
@@ -104,6 +106,11 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
         until_date: isoDateSchema
           .optional()
           .describe("Only return transactions on or before this date."),
+        last_knowledge_of_server: lastKnowledgeOfServerSchema
+          .optional()
+          .describe(
+            "Delta sync cursor: pass the server_knowledge value from a previous ynab_list_transactions call to receive only transactions that changed since then (ignores since_date/until_date filtering on the delta itself, though YNAB still applies them). Omit for a full fetch.",
+          ),
       },
       annotations: READ_ONLY,
     },
@@ -111,10 +118,12 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
       budget_id,
       since_date,
       until_date,
+      last_knowledge_of_server,
     }: {
       budget_id: string;
       since_date?: string | undefined;
       until_date?: string | undefined;
+      last_knowledge_of_server?: number | undefined;
     }) => {
       const sinceDate = since_date ?? defaultSinceDate();
       if (until_date !== undefined && sinceDate > until_date) {
@@ -124,11 +133,14 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
       }
 
       return withYnabErrorHandling(async () => {
-        const transactions = await ynab.listTransactions(budget_id, {
+        const { items, serverKnowledge } = await ynab.listTransactions(budget_id, {
           sinceDate,
           ...(until_date !== undefined && { untilDate: until_date }),
+          ...(last_knowledge_of_server !== undefined && {
+            lastKnowledgeOfServer: last_knowledge_of_server,
+          }),
         });
-        const nonDeleted = transactions.filter((t) => !t.deleted);
+        const nonDeleted = items.filter((t) => !t.deleted);
         const sorted = nonDeleted.sort((a, b) => {
           if (a.date < b.date) return 1;
           if (a.date > b.date) return -1;
@@ -147,7 +159,11 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
           cleared: t.cleared,
           approved: t.approved,
         }));
-        return jsonToolResult({ transactions: summary, has_more: sorted.length > MAX_RESULTS });
+        return jsonToolResult({
+          transactions: summary,
+          has_more: sorted.length > MAX_RESULTS,
+          server_knowledge: serverKnowledge,
+        });
       });
     },
   );
@@ -189,7 +205,7 @@ export function registerTransactionTools(server: McpServer, ynab: YnabClient): v
       }
 
       return withYnabErrorHandling(async () => {
-        const transactions = await ynab.listTransactions(budget_id, {
+        const { items: transactions } = await ynab.listTransactions(budget_id, {
           sinceDate,
           ...(until_date !== undefined && { untilDate: until_date }),
         });

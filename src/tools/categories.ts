@@ -1,7 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { YnabClient } from "../ynab/client.js";
-import { budgetIdSchema, milliunitsSchema, monthSchema } from "../schemas/common.js";
+import {
+  budgetIdSchema,
+  lastKnowledgeOfServerSchema,
+  milliunitsSchema,
+  monthSchema,
+} from "../schemas/common.js";
 import { milliunitsBrand } from "../ynab/types.js";
 import { CREATES, jsonToolResult, READ_ONLY, UPDATES, withYnabErrorHandling } from "./helpers.js";
 
@@ -36,13 +41,25 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
       title: "List YNAB categories",
       description:
         "List all category groups and categories in a budget, with budgeted/activity/balance figures (in milliunits) for the current month.",
-      inputSchema: { budget_id: budgetIdSchema },
+      inputSchema: {
+        budget_id: budgetIdSchema,
+        last_knowledge_of_server: lastKnowledgeOfServerSchema.optional(),
+      },
       annotations: READ_ONLY,
     },
-    async ({ budget_id }: { budget_id: string }) =>
+    async ({
+      budget_id,
+      last_knowledge_of_server,
+    }: {
+      budget_id: string;
+      last_knowledge_of_server?: number | undefined;
+    }) =>
       withYnabErrorHandling(async () => {
-        const groups = await ynab.listCategories(budget_id);
-        const summary = groups
+        const { items, serverKnowledge } = await ynab.listCategories(
+          budget_id,
+          last_knowledge_of_server,
+        );
+        const summary = items
           .filter((g) => !g.deleted)
           .map((g) => ({
             id: g.id,
@@ -59,7 +76,7 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
                 balance: milliunitsBrand.parse(c.balance),
               })),
           }));
-        return jsonToolResult(summary);
+        return jsonToolResult({ category_groups: summary, server_knowledge: serverKnowledge });
       }),
   );
 

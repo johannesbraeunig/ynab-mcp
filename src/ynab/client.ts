@@ -68,6 +68,17 @@ export interface TransactionUpdateInput {
 }
 
 /**
+ * Result of a list endpoint that supports YNAB's delta sync mechanism:
+ * pass `serverKnowledge` back in as `lastKnowledgeOfServer` on a later call
+ * to receive only entities that changed since then, instead of the full
+ * collection every time.
+ */
+export interface ListResult<T> {
+  items: T[];
+  serverKnowledge: number;
+}
+
+/**
  * Narrow, stable interface every tool depends on. Tool-facing vocabulary is
  * "budget" throughout (matches the YNAB product and this server's tool
  * schemas) even though the underlying `ynab` SDK's primary resource is now
@@ -79,10 +90,13 @@ export interface YnabClient {
   listBudgets(): Promise<PlanSummary[]>;
   getBudget(budgetId: string): Promise<PlanDetail>;
   getBudgetSettings(budgetId: string): Promise<PlanSettings>;
-  listAccounts(budgetId: string): Promise<Account[]>;
+  listAccounts(budgetId: string, lastKnowledgeOfServer?: number): Promise<ListResult<Account>>;
   getAccount(budgetId: string, accountId: string): Promise<Account>;
   createAccount(budgetId: string, input: NewAccountInput): Promise<Account>;
-  listCategories(budgetId: string): Promise<CategoryGroupWithCategories[]>;
+  listCategories(
+    budgetId: string,
+    lastKnowledgeOfServer?: number,
+  ): Promise<ListResult<CategoryGroupWithCategories>>;
   getCategory(budgetId: string, categoryId: string): Promise<Category>;
   createCategoryGroup(budgetId: string, name: string): Promise<CategoryGroup>;
   updateCategoryGroup(
@@ -102,17 +116,20 @@ export interface YnabClient {
     categoryId: string,
     budgeted: number,
   ): Promise<Category>;
-  listMonths(budgetId: string): Promise<MonthSummary[]>;
+  listMonths(budgetId: string, lastKnowledgeOfServer?: number): Promise<ListResult<MonthSummary>>;
   getMonth(budgetId: string, month: string): Promise<MonthDetail>;
-  listPayees(budgetId: string): Promise<Payee[]>;
+  listPayees(budgetId: string, lastKnowledgeOfServer?: number): Promise<ListResult<Payee>>;
   getPayee(budgetId: string, payeeId: string): Promise<Payee>;
   createPayee(budgetId: string, name: string): Promise<Payee>;
   updatePayee(budgetId: string, payeeId: string, name: string): Promise<Payee>;
-  listScheduledTransactions(budgetId: string): Promise<ScheduledTransactionDetail[]>;
+  listScheduledTransactions(
+    budgetId: string,
+    lastKnowledgeOfServer?: number,
+  ): Promise<ListResult<ScheduledTransactionDetail>>;
   listTransactions(
     budgetId: string,
-    options?: { sinceDate?: string; untilDate?: string },
-  ): Promise<TransactionDetail[]>;
+    options?: { sinceDate?: string; untilDate?: string; lastKnowledgeOfServer?: number },
+  ): Promise<ListResult<TransactionDetail>>;
   createTransaction(budgetId: string, input: NewTransactionInput): Promise<TransactionDetail>;
   createTransactionsBulk(
     budgetId: string,
@@ -150,9 +167,9 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       return res.data.settings;
     },
 
-    async listAccounts(budgetId) {
-      const res = await api.accounts.getAccounts(budgetId);
-      return res.data.accounts;
+    async listAccounts(budgetId, lastKnowledgeOfServer) {
+      const res = await api.accounts.getAccounts(budgetId, lastKnowledgeOfServer);
+      return { items: res.data.accounts, serverKnowledge: res.data.server_knowledge };
     },
 
     async getAccount(budgetId, accountId) {
@@ -167,9 +184,9 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       return res.data.account;
     },
 
-    async listCategories(budgetId) {
-      const res = await api.categories.getCategories(budgetId);
-      return res.data.category_groups;
+    async listCategories(budgetId, lastKnowledgeOfServer) {
+      const res = await api.categories.getCategories(budgetId, lastKnowledgeOfServer);
+      return { items: res.data.category_groups, serverKnowledge: res.data.server_knowledge };
     },
 
     async getCategory(budgetId, categoryId) {
@@ -220,9 +237,9 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       return res.data.category;
     },
 
-    async listMonths(budgetId) {
-      const res = await api.months.getPlanMonths(budgetId);
-      return res.data.months;
+    async listMonths(budgetId, lastKnowledgeOfServer) {
+      const res = await api.months.getPlanMonths(budgetId, lastKnowledgeOfServer);
+      return { items: res.data.months, serverKnowledge: res.data.server_knowledge };
     },
 
     async getMonth(budgetId, month) {
@@ -230,9 +247,9 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       return res.data.month;
     },
 
-    async listPayees(budgetId) {
-      const res = await api.payees.getPayees(budgetId);
-      return res.data.payees;
+    async listPayees(budgetId, lastKnowledgeOfServer) {
+      const res = await api.payees.getPayees(budgetId, lastKnowledgeOfServer);
+      return { items: res.data.payees, serverKnowledge: res.data.server_knowledge };
     },
 
     async getPayee(budgetId, payeeId) {
@@ -250,9 +267,15 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       return res.data.payee;
     },
 
-    async listScheduledTransactions(budgetId) {
-      const res = await api.scheduledTransactions.getScheduledTransactions(budgetId);
-      return res.data.scheduled_transactions;
+    async listScheduledTransactions(budgetId, lastKnowledgeOfServer) {
+      const res = await api.scheduledTransactions.getScheduledTransactions(
+        budgetId,
+        lastKnowledgeOfServer,
+      );
+      return {
+        items: res.data.scheduled_transactions,
+        serverKnowledge: res.data.server_knowledge,
+      };
     },
 
     async listTransactions(budgetId, options) {
@@ -260,8 +283,10 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
         budgetId,
         options?.sinceDate,
         options?.untilDate,
+        undefined,
+        options?.lastKnowledgeOfServer,
       );
-      return res.data.transactions;
+      return { items: res.data.transactions, serverKnowledge: res.data.server_knowledge };
     },
 
     async createTransaction(budgetId, input) {

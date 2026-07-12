@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { YnabClient } from "../ynab/client.js";
-import { budgetIdSchema, monthSchema } from "../schemas/common.js";
+import { budgetIdSchema, lastKnowledgeOfServerSchema, monthSchema } from "../schemas/common.js";
 import { milliunitsBrand } from "../ynab/types.js";
 import { jsonToolResult, READ_ONLY, withYnabErrorHandling } from "./helpers.js";
 
@@ -11,13 +11,25 @@ export function registerMonthTools(server: McpServer, ynab: YnabClient): void {
       title: "List YNAB budget months",
       description:
         "List summary figures (income/budgeted/activity/to_be_budgeted, in milliunits) for every month in a budget's history.",
-      inputSchema: { budget_id: budgetIdSchema },
+      inputSchema: {
+        budget_id: budgetIdSchema,
+        last_knowledge_of_server: lastKnowledgeOfServerSchema.optional(),
+      },
       annotations: READ_ONLY,
     },
-    async ({ budget_id }: { budget_id: string }) =>
+    async ({
+      budget_id,
+      last_knowledge_of_server,
+    }: {
+      budget_id: string;
+      last_knowledge_of_server?: number | undefined;
+    }) =>
       withYnabErrorHandling(async () => {
-        const months = await ynab.listMonths(budget_id);
-        const summary = months
+        const { items, serverKnowledge } = await ynab.listMonths(
+          budget_id,
+          last_knowledge_of_server,
+        );
+        const summary = items
           .filter((m) => !m.deleted)
           .map((m) => ({
             month: m.month,
@@ -27,7 +39,7 @@ export function registerMonthTools(server: McpServer, ynab: YnabClient): void {
             to_be_budgeted: milliunitsBrand.parse(m.to_be_budgeted),
             age_of_money: m.age_of_money,
           }));
-        return jsonToolResult(summary);
+        return jsonToolResult({ months: summary, server_knowledge: serverKnowledge });
       }),
   );
 

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { YnabClient } from "../ynab/client.js";
-import { budgetIdSchema } from "../schemas/common.js";
+import { budgetIdSchema, lastKnowledgeOfServerSchema } from "../schemas/common.js";
 import { CREATES, jsonToolResult, READ_ONLY, UPDATES, withYnabErrorHandling } from "./helpers.js";
 
 export function registerPayeeTools(server: McpServer, ynab: YnabClient): void {
@@ -10,20 +10,32 @@ export function registerPayeeTools(server: McpServer, ynab: YnabClient): void {
     {
       title: "List YNAB payees",
       description: "List all payees in a budget.",
-      inputSchema: { budget_id: budgetIdSchema },
+      inputSchema: {
+        budget_id: budgetIdSchema,
+        last_knowledge_of_server: lastKnowledgeOfServerSchema.optional(),
+      },
       annotations: READ_ONLY,
     },
-    async ({ budget_id }: { budget_id: string }) =>
+    async ({
+      budget_id,
+      last_knowledge_of_server,
+    }: {
+      budget_id: string;
+      last_knowledge_of_server?: number | undefined;
+    }) =>
       withYnabErrorHandling(async () => {
-        const payees = await ynab.listPayees(budget_id);
-        const summary = payees
+        const { items, serverKnowledge } = await ynab.listPayees(
+          budget_id,
+          last_knowledge_of_server,
+        );
+        const summary = items
           .filter((p) => !p.deleted)
           .map((p) => ({
             id: p.id,
             name: p.name,
             transfer_account_id: p.transfer_account_id,
           }));
-        return jsonToolResult(summary);
+        return jsonToolResult({ payees: summary, server_knowledge: serverKnowledge });
       }),
   );
 

@@ -43,6 +43,10 @@ export async function withYnabErrorHandling(
   try {
     return await fn();
   } catch (err) {
-    return errorToolResult(mapYnabError(err).message);
+    const mapped = mapYnabError(err);
+    const suffix = mapped.retryable
+      ? " This error is transient — wait before retrying rather than retrying immediately, especially after a rate limit error."
+      : " Retrying the same call will not help; the request itself needs to change (e.g. fix the id, or check YNAB_ACCESS_TOKEN).";
+    return errorToolResult(mapped.message + suffix);
   }
 }
