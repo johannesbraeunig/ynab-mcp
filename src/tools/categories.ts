@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { YnabClient } from "../ynab/client.js";
 import {
   budgetIdSchema,
+  isoDateSchema,
   lastKnowledgeOfServerSchema,
   milliunitsSchema,
   monthSchema,
@@ -20,6 +21,10 @@ function categorySummary(c: {
   budgeted: number;
   activity: number;
   balance: number;
+  goal_type?: string | null;
+  goal_target?: number | null;
+  goal_target_date?: string | null;
+  goal_needs_whole_amount?: boolean | null;
 }) {
   return {
     id: c.id,
@@ -31,6 +36,13 @@ function categorySummary(c: {
     budgeted: milliunitsBrand.parse(c.budgeted),
     activity: milliunitsBrand.parse(c.activity),
     balance: milliunitsBrand.parse(c.balance),
+    goal_type: c.goal_type ?? undefined,
+    goal_target:
+      c.goal_target !== undefined && c.goal_target !== null
+        ? milliunitsBrand.parse(c.goal_target)
+        : undefined,
+    goal_target_date: c.goal_target_date ?? undefined,
+    goal_needs_whole_amount: c.goal_needs_whole_amount ?? undefined,
   };
 }
 
@@ -107,8 +119,12 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
           balance: milliunitsBrand.parse(c.balance),
           goal_type: c.goal_type,
           goal_target:
-            c.goal_target !== undefined ? milliunitsBrand.parse(c.goal_target) : undefined,
+            c.goal_target !== undefined && c.goal_target !== null
+              ? milliunitsBrand.parse(c.goal_target)
+              : undefined,
+          goal_target_date: c.goal_target_date,
           goal_target_month: c.goal_target_month,
+          goal_needs_whole_amount: c.goal_needs_whole_amount,
           goal_percentage_complete: c.goal_percentage_complete,
         });
       }),
@@ -159,6 +175,18 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
       }),
   );
 
+  const goalTargetSchema = milliunitsSchema.describe(
+    "The goal target amount in milliunits. If the category has no goal yet, setting this creates a monthly goal (defaulting to a 'NEED' goal, or 'MF' for Credit Card Payment categories) — the specific goal type/cadence can't be chosen through the API.",
+  );
+  const goalTargetDateSchema = isoDateSchema.describe(
+    "The goal target date, e.g. for a savings goal with a deadline",
+  );
+  const goalNeedsWholeAmountSchema = z
+    .boolean()
+    .describe(
+      "Only applies to 'NEED' goals. true = 'Set aside another...' (needs the full amount each period); false = 'Refill up to...'",
+    );
+
   server.registerTool(
     "ynab_create_category",
     {
@@ -172,6 +200,9 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
           .describe("YNAB category group id the new category belongs to"),
         name: z.string().min(1).describe("Name for the new category"),
         note: z.string().optional().describe("Optional note for the category"),
+        goal_target: goalTargetSchema.optional(),
+        goal_target_date: goalTargetDateSchema.optional(),
+        goal_needs_whole_amount: goalNeedsWholeAmountSchema.optional(),
       },
       annotations: CREATES,
     },
@@ -180,17 +211,28 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
       category_group_id,
       name,
       note,
+      goal_target,
+      goal_target_date,
+      goal_needs_whole_amount,
     }: {
       budget_id: string;
       category_group_id: string;
       name: string;
       note?: string | undefined;
+      goal_target?: number | undefined;
+      goal_target_date?: string | undefined;
+      goal_needs_whole_amount?: boolean | undefined;
     }) =>
       withYnabErrorHandling(async () => {
         const c = await ynab.createCategory(budget_id, {
           categoryGroupId: category_group_id,
           name,
           ...(note !== undefined && { note }),
+          ...(goal_target !== undefined && { goalTarget: goal_target }),
+          ...(goal_target_date !== undefined && { goalTargetDate: goal_target_date }),
+          ...(goal_needs_whole_amount !== undefined && {
+            goalNeedsWholeAmount: goal_needs_whole_amount,
+          }),
         });
         return jsonToolResult(categorySummary(c));
       }),
@@ -201,7 +243,7 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
     {
       title: "Update a YNAB category",
       description:
-        "Update a category's name, note, and/or which category group it belongs to. Only the fields provided are changed. To change the budgeted (assigned) amount for a specific month, use ynab_assign_budgeted_amount instead.",
+        "Update a category's name, note, category group, and/or savings goal target. Only the fields provided are changed. To change the budgeted (assigned) amount for a specific month, use ynab_assign_budgeted_amount instead.",
       inputSchema: {
         budget_id: budgetIdSchema,
         category_id: z.string().min(1).describe("YNAB category id"),
@@ -212,6 +254,9 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
           .min(1)
           .optional()
           .describe("Move the category to this category group id"),
+        goal_target: goalTargetSchema.optional(),
+        goal_target_date: goalTargetDateSchema.optional(),
+        goal_needs_whole_amount: goalNeedsWholeAmountSchema.optional(),
       },
       annotations: UPDATES,
     },
@@ -221,18 +266,29 @@ export function registerCategoryTools(server: McpServer, ynab: YnabClient): void
       name,
       note,
       category_group_id,
+      goal_target,
+      goal_target_date,
+      goal_needs_whole_amount,
     }: {
       budget_id: string;
       category_id: string;
       name?: string | undefined;
       note?: string | undefined;
       category_group_id?: string | undefined;
+      goal_target?: number | undefined;
+      goal_target_date?: string | undefined;
+      goal_needs_whole_amount?: boolean | undefined;
     }) =>
       withYnabErrorHandling(async () => {
         const c = await ynab.updateCategory(budget_id, category_id, {
           ...(name !== undefined && { name }),
           ...(note !== undefined && { note }),
           ...(category_group_id !== undefined && { categoryGroupId: category_group_id }),
+          ...(goal_target !== undefined && { goalTarget: goal_target }),
+          ...(goal_target_date !== undefined && { goalTargetDate: goal_target_date }),
+          ...(goal_needs_whole_amount !== undefined && {
+            goalNeedsWholeAmount: goal_needs_whole_amount,
+          }),
         });
         return jsonToolResult(categorySummary(c));
       }),

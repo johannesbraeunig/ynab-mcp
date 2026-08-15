@@ -406,6 +406,105 @@ describe("MCP server", () => {
     });
   });
 
+  it("ynab_create_category forwards goal fields and echoes the resulting goal", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.post(`${BASE}/plans/last-used/categories`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            category: {
+              id: "c1",
+              category_group_id: "cg1",
+              name: "Vacation",
+              hidden: false,
+              internal: false,
+              budgeted: 0,
+              activity: 0,
+              balance: 0,
+              deleted: false,
+              goal_type: "TBD",
+              goal_target: 500_000,
+              goal_target_date: "2026-12-01",
+              goal_needs_whole_amount: null,
+            },
+          },
+        });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_create_category",
+      arguments: {
+        budget_id: "last-used",
+        category_group_id: "cg1",
+        name: "Vacation",
+        goal_target: 500_000,
+        goal_target_date: "2026-12-01",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({
+      category: {
+        category_group_id: "cg1",
+        name: "Vacation",
+        goal_target: 500_000,
+        goal_target_date: "2026-12-01",
+      },
+    });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.goal_type).toBe("TBD");
+    expect(parsed.goal_target).toBe(500_000);
+    expect(parsed.goal_target_date).toBe("2026-12-01");
+  });
+
+  it("ynab_update_category PATCHes goal fields onto an existing category", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.patch(`${BASE}/plans/last-used/categories/:categoryId`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            category: {
+              id: "c1",
+              category_group_id: "cg1",
+              name: "Groceries",
+              hidden: false,
+              internal: false,
+              budgeted: 0,
+              activity: 0,
+              balance: 0,
+              deleted: false,
+              goal_type: "NEED",
+              goal_target: 30_000,
+              goal_needs_whole_amount: true,
+            },
+          },
+        });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_update_category",
+      arguments: {
+        budget_id: "last-used",
+        category_id: "c1",
+        goal_target: 30_000,
+        goal_needs_whole_amount: true,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({
+      category: { goal_target: 30_000, goal_needs_whole_amount: true },
+    });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.goal_type).toBe("NEED");
+    expect(parsed.goal_target).toBe(30_000);
+    expect(parsed.goal_needs_whole_amount).toBe(true);
+  });
+
   it("ynab_assign_budgeted_amount PATCHes the month/category endpoint with the milliunits amount", async () => {
     let receivedBody: unknown;
     let receivedPath: string | undefined;

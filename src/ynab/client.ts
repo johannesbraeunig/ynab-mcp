@@ -19,12 +19,18 @@ export interface NewCategoryInput {
   categoryGroupId: string;
   name: string;
   note?: string;
+  goalTarget?: number;
+  goalTargetDate?: string;
+  goalNeedsWholeAmount?: boolean;
 }
 
 export interface CategoryUpdateInput {
   name?: string;
   note?: string;
   categoryGroupId?: string;
+  goalTarget?: number;
+  goalTargetDate?: string;
+  goalNeedsWholeAmount?: boolean;
 }
 
 export type ClearedStatus = "cleared" | "uncleared" | "reconciled";
@@ -215,6 +221,11 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
           category_group_id: input.categoryGroupId,
           name: input.name,
           ...(input.note !== undefined && { note: input.note }),
+          ...(input.goalTarget !== undefined && { goal_target: input.goalTarget }),
+          ...(input.goalTargetDate !== undefined && { goal_target_date: input.goalTargetDate }),
+          ...(input.goalNeedsWholeAmount !== undefined && {
+            goal_needs_whole_amount: input.goalNeedsWholeAmount,
+          }),
         },
       });
       return res.data.category;
@@ -226,6 +237,11 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
           ...(input.name !== undefined && { name: input.name }),
           ...(input.note !== undefined && { note: input.note }),
           ...(input.categoryGroupId !== undefined && { category_group_id: input.categoryGroupId }),
+          ...(input.goalTarget !== undefined && { goal_target: input.goalTarget }),
+          ...(input.goalTargetDate !== undefined && { goal_target_date: input.goalTargetDate }),
+          ...(input.goalNeedsWholeAmount !== undefined && {
+            goal_needs_whole_amount: input.goalNeedsWholeAmount,
+          }),
         },
       });
       return res.data.category;
