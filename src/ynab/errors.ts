@@ -25,6 +25,8 @@ export class YnabToolError extends Error {
 }
 
 export function mapYnabError(err: unknown): YnabToolError {
+  if (err instanceof YnabToolError) return err;
+
   const parsed = ynabErrorBodySchema.safeParse(err);
   if (parsed.success) {
     const { id, detail } = parsed.data.error;

@@ -4,7 +4,7 @@ import { setupServer } from "msw/node";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../../src/server.js";
-import type { Account, TransactionDetail } from "ynab";
+import type { Account, Category, TransactionDetail } from "ynab";
 
 /**
  * These tests exercise the real YnabClient (src/ynab/client.ts) and the
@@ -55,6 +55,31 @@ function fakeTransaction(overrides: Partial<TransactionDetail> = {}): Transactio
     deleted: false,
     ...overrides,
   };
+}
+
+function fakeCategory(overrides: Partial<Category> = {}): Category {
+  return {
+    id: "c1",
+    category_group_id: "cg1",
+    name: "Groceries",
+    hidden: false,
+    internal: false,
+    budgeted: 0,
+    activity: 0,
+    balance: 0,
+    deleted: false,
+    ...overrides,
+  };
+}
+
+function saveTransactionsResponse(transactions: TransactionDetail[]) {
+  return HttpResponse.json({
+    data: {
+      transaction_ids: transactions.map((t) => t.id),
+      transactions,
+      server_knowledge: 1,
+    },
+  });
 }
 
 function ynabErrorResponse(status: number, id: string, name: string, detail: string) {
@@ -119,7 +144,12 @@ describe("MCP server", () => {
         "ynab_create_transaction",
         "ynab_create_transactions_bulk",
         "ynab_update_transaction",
+        "ynab_update_transactions_bulk",
+        "ynab_match_transfer",
         "ynab_delete_transaction",
+        "ynab_import_transactions",
+        "ynab_reconcile_account",
+        "ynab_move_money",
       ].sort(),
     );
   });
@@ -709,5 +739,584 @@ describe("MCP server", () => {
     expect(receivedQuery).toBe("17");
     const parsed = JSON.parse(textOf(result.content));
     expect(parsed.server_knowledge).toBe(42);
+  });
+
+  it("ynab_list_transactions passes type and account_id to YNAB's per-account endpoint", async () => {
+    let receivedType: string | null = null;
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/accounts/a1/transactions`, ({ request }) => {
+        receivedType = new URL(request.url).searchParams.get("type");
+        return HttpResponse.json({
+          data: {
+            transactions: [fakeTransaction({ id: "t1", approved: false })],
+            server_knowledge: 5,
+          },
+        });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_list_transactions",
+      arguments: { budget_id: "last-used", type: "unapproved", account_id: "a1" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedType).toBe("unapproved");
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.transactions).toHaveLength(1);
+    expect(parsed.transactions[0].account_id).toBe("a1");
+  });
+
+  it("ynab_list_transactions by category_id returns split lines as hybrid rows", async () => {
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/categories/c1/transactions`, () =>
+        HttpResponse.json({
+          data: {
+            transactions: [
+              {
+                ...fakeTransaction({ id: "s1", amount: -5000, category_id: "c1" }),
+                type: "subtransaction",
+                parent_transaction_id: "t1",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_list_transactions",
+      arguments: { budget_id: "last-used", category_id: "c1" },
+    });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.transactions[0]).toMatchObject({
+      id: "s1",
+      type: "subtransaction",
+      parent_transaction_id: "t1",
+    });
+    expect(parsed.server_knowledge).toBeNull();
+  });
+
+  it("ynab_list_transactions rejects combining account_id and payee_id without an HTTP call", async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_list_transactions",
+      arguments: { budget_id: "last-used", account_id: "a1", payee_id: "p1" },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result.content)).toMatch(/at most one/);
+  });
+
+  it("ynab_create_transaction with transfer_account_id sends the target account's transfer payee id", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/accounts/cc1`, () =>
+        HttpResponse.json({
+          data: { account: fakeAccount({ id: "cc1", transfer_payee_id: "transfer-cc1" }) },
+        }),
+      ),
+      http.post(`${BASE}/plans/last-used/transactions`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            transaction_ids: ["t1"],
+            transaction: fakeTransaction({
+              id: "t1",
+              amount: -100_000,
+              payee_id: "transfer-cc1",
+              transfer_account_id: "cc1",
+            }),
+            server_knowledge: 1,
+          },
+        });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_create_transaction",
+      arguments: {
+        budget_id: "last-used",
+        account_id: "a1",
+        date: "2026-09-30",
+        amount: -100_000,
+        transfer_account_id: "cc1",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({
+      transaction: {
+        account_id: "a1",
+        date: "2026-09-30",
+        amount: -100_000,
+        payee_id: "transfer-cc1",
+      },
+    });
+    expect(JSON.parse(textOf(result.content)).transfer_account_id).toBe("cc1");
+  });
+
+  it("ynab_create_transaction sends subtransactions for a split", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.post(`${BASE}/plans/last-used/transactions`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            transaction_ids: ["t1"],
+            transaction: fakeTransaction({ id: "t1", amount: -50_000 }),
+            server_knowledge: 1,
+          },
+        });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_create_transaction",
+      arguments: {
+        budget_id: "last-used",
+        account_id: "a1",
+        date: "2026-09-30",
+        amount: -50_000,
+        payee_name: "Supermarket",
+        subtransactions: [
+          { amount: -40_000, category_id: "groceries" },
+          { amount: -10_000, category_id: "drugstore", memo: "Shampoo" },
+        ],
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({
+      transaction: {
+        account_id: "a1",
+        date: "2026-09-30",
+        amount: -50_000,
+        payee_name: "Supermarket",
+        subtransactions: [
+          { amount: -40_000, category_id: "groceries" },
+          { amount: -10_000, category_id: "drugstore", memo: "Shampoo" },
+        ],
+      },
+    });
+  });
+
+  it("ynab_create_transaction rejects subtransactions that don't add up, without an HTTP call", async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_create_transaction",
+      arguments: {
+        budget_id: "last-used",
+        account_id: "a1",
+        date: "2026-09-30",
+        amount: -50_000,
+        subtransactions: [{ amount: -40_000 }, { amount: -5_000 }],
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result.content)).toMatch(/add up to -45000/);
+  });
+
+  it("ynab_update_transactions_bulk PATCHes all updates in one request", async () => {
+    let receivedBody: unknown;
+    let requestCount = 0;
+    mswServer.use(
+      http.patch(`${BASE}/plans/last-used/transactions`, async ({ request }) => {
+        requestCount += 1;
+        receivedBody = await request.json();
+        return saveTransactionsResponse([
+          fakeTransaction({ id: "t1", category_id: "c1", approved: true }),
+          fakeTransaction({ id: "t2", approved: true }),
+        ]);
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_update_transactions_bulk",
+      arguments: {
+        budget_id: "last-used",
+        transactions: [
+          { id: "t1", category_id: "c1", approved: true },
+          { id: "t2", approved: true },
+        ],
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(requestCount).toBe(1);
+    expect(receivedBody).toEqual({
+      transactions: [
+        { id: "t1", category_id: "c1", approved: true },
+        { id: "t2", approved: true },
+      ],
+    });
+    expect(JSON.parse(textOf(result.content))).toHaveLength(2);
+  });
+
+  it("ynab_match_transfer converts one side into a transfer and deletes the imported duplicate", async () => {
+    const calls: string[] = [];
+    let convertBody: unknown;
+    let counterpartBody: unknown;
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/transactions/:id`, ({ params }) => {
+        calls.push(`GET ${params.id}`);
+        return HttpResponse.json({
+          data: {
+            transaction:
+              params.id === "checking-side"
+                ? fakeTransaction({ id: "checking-side", account_id: "a1", amount: -100_000 })
+                : fakeTransaction({
+                    id: "cc-side",
+                    account_id: "cc1",
+                    amount: 100_000,
+                    cleared: "cleared",
+                  }),
+          },
+        });
+      }),
+      http.get(`${BASE}/plans/last-used/accounts/cc1`, () =>
+        HttpResponse.json({
+          data: { account: fakeAccount({ id: "cc1", transfer_payee_id: "transfer-cc1" }) },
+        }),
+      ),
+      http.put(`${BASE}/plans/last-used/transactions/:id`, async ({ params, request }) => {
+        calls.push(`PUT ${params.id}`);
+        if (params.id === "checking-side") {
+          convertBody = await request.json();
+          return HttpResponse.json({
+            data: {
+              transaction: fakeTransaction({
+                id: "checking-side",
+                amount: -100_000,
+                transfer_account_id: "cc1",
+                transfer_transaction_id: "new-cc-side",
+              }),
+            },
+          });
+        }
+        counterpartBody = await request.json();
+        return HttpResponse.json({
+          data: { transaction: fakeTransaction({ id: "new-cc-side", account_id: "cc1" }) },
+        });
+      }),
+      http.delete(`${BASE}/plans/last-used/transactions/cc-side`, () => {
+        calls.push("DELETE cc-side");
+        return HttpResponse.json({
+          data: { transaction: fakeTransaction({ id: "cc-side", deleted: true }) },
+        });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_match_transfer",
+      arguments: {
+        budget_id: "last-used",
+        transaction_id: "checking-side",
+        counterpart_transaction_id: "cc-side",
+        confirm: true,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(calls).toEqual([
+      "GET checking-side",
+      "GET cc-side",
+      "PUT checking-side",
+      "DELETE cc-side",
+      "PUT new-cc-side",
+    ]);
+    expect(convertBody).toEqual({ transaction: { payee_id: "transfer-cc1" } });
+    expect(counterpartBody).toEqual({ transaction: { cleared: "cleared", approved: true } });
+  });
+
+  it("ynab_match_transfer refuses transactions whose amounts don't mirror each other", async () => {
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/transactions/:id`, ({ params }) =>
+        HttpResponse.json({
+          data: {
+            transaction: fakeTransaction({
+              id: String(params.id),
+              account_id: params.id === "x" ? "a1" : "cc1",
+              amount: -100_000,
+            }),
+          },
+        }),
+      ),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_match_transfer",
+      arguments: {
+        budget_id: "last-used",
+        transaction_id: "x",
+        counterpart_transaction_id: "y",
+        confirm: true,
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result.content)).toMatch(/opposite amounts/);
+  });
+
+  it("ynab_import_transactions POSTs to the import endpoint and returns the imported ids", async () => {
+    mswServer.use(
+      http.post(`${BASE}/plans/last-used/transactions/import`, () =>
+        HttpResponse.json({ data: { transaction_ids: ["i1", "i2"] } }, { status: 201 }),
+      ),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_import_transactions",
+      arguments: { budget_id: "last-used" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result.content))).toEqual({
+      imported_count: 2,
+      transaction_ids: ["i1", "i2"],
+    });
+  });
+
+  const reconcileHistory = [
+    fakeTransaction({ id: "r1", date: "2026-08-01", amount: 500_000, cleared: "reconciled" }),
+    fakeTransaction({ id: "c1", date: "2026-09-10", amount: -20_000, cleared: "cleared" }),
+    fakeTransaction({ id: "u1", date: "2026-09-15", amount: -5_000, cleared: "uncleared" }),
+    fakeTransaction({ id: "c2", date: "2026-10-02", amount: -1_000, cleared: "cleared" }),
+  ];
+
+  it("ynab_reconcile_account with dry_run only reports the difference", async () => {
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/accounts/a1/transactions`, () =>
+        HttpResponse.json({ data: { transactions: reconcileHistory, server_knowledge: 1 } }),
+      ),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_reconcile_account",
+      arguments: {
+        budget_id: "last-used",
+        account_id: "a1",
+        statement_balance: 470_000,
+        statement_date: "2026-09-30",
+        dry_run: true,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result.content))).toEqual({
+      dry_run: true,
+      account_id: "a1",
+      statement_date: "2026-09-30",
+      statement_balance: 470_000,
+      cleared_balance: 480_000,
+      difference: -10_000,
+      transactions_to_reconcile: 1,
+      uncleared_transactions_up_to_date: 1,
+    });
+  });
+
+  it("ynab_reconcile_account books an adjustment and marks cleared transactions reconciled", async () => {
+    let adjustmentBody: unknown;
+    let patchBody: unknown;
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/accounts/a1/transactions`, () =>
+        HttpResponse.json({ data: { transactions: reconcileHistory, server_knowledge: 1 } }),
+      ),
+      http.post(`${BASE}/plans/last-used/transactions`, async ({ request }) => {
+        adjustmentBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            transaction_ids: ["adj"],
+            transaction: fakeTransaction({ id: "adj", amount: -10_000, cleared: "reconciled" }),
+            server_knowledge: 2,
+          },
+        });
+      }),
+      http.patch(`${BASE}/plans/last-used/transactions`, async ({ request }) => {
+        patchBody = await request.json();
+        return saveTransactionsResponse([fakeTransaction({ id: "c1", cleared: "reconciled" })]);
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_reconcile_account",
+      arguments: {
+        budget_id: "last-used",
+        account_id: "a1",
+        statement_balance: 470_000,
+        statement_date: "2026-09-30",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(adjustmentBody).toEqual({
+      transaction: {
+        account_id: "a1",
+        date: "2026-09-30",
+        amount: -10_000,
+        payee_name: "Reconciliation Balance Adjustment",
+        memo: "Entered automatically by ynab-mcp reconciliation",
+        cleared: "reconciled",
+        approved: true,
+      },
+    });
+    expect(patchBody).toEqual({ transactions: [{ id: "c1", cleared: "reconciled" }] });
+    const parsed = JSON.parse(textOf(result.content));
+    expect(parsed.reconciled_count).toBe(1);
+    expect(parsed.adjustment.id).toBe("adj");
+  });
+
+  it("ynab_update_category sends goal_target: null to remove a goal", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.patch(`${BASE}/plans/last-used/categories/c1`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({ data: { category: fakeCategory() } });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_update_category",
+      arguments: { budget_id: "last-used", category_id: "c1", goal_target: null },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({ category: { goal_target: null } });
+  });
+
+  it("ynab_update_category forwards goal_frequency, which the SDK's serializer would otherwise drop", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.patch(`${BASE}/plans/last-used/categories/c1`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({ data: { category: fakeCategory() } });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_update_category",
+      arguments: {
+        budget_id: "last-used",
+        category_id: "c1",
+        goal_target: 120_000,
+        goal_frequency: "yearly",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({
+      category: { goal_target: 120_000, goal_frequency: "yearly" },
+    });
+  });
+
+  it("ynab_update_category rejects goal_frequency without goal_target, without an HTTP call", async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_update_category",
+      arguments: { budget_id: "last-used", category_id: "c1", goal_frequency: "weekly" },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result.content)).toMatch(/requires goal_target/);
+  });
+
+  it("ynab_assign_budgeted_amount in add mode adds to the current month's budgeted amount", async () => {
+    let receivedBody: unknown;
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/months/2026-10-01/categories/c1`, () =>
+        HttpResponse.json({ data: { category: fakeCategory({ budgeted: 30_000 }) } }),
+      ),
+      http.patch(`${BASE}/plans/last-used/months/2026-10-01/categories/c1`, async ({ request }) => {
+        receivedBody = await request.json();
+        return HttpResponse.json({ data: { category: fakeCategory({ budgeted: 45_000 }) } });
+      }),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_assign_budgeted_amount",
+      arguments: {
+        budget_id: "last-used",
+        month: "2026-10-01",
+        category_id: "c1",
+        budgeted: 15_000,
+        mode: "add",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(receivedBody).toEqual({ category: { budgeted: 45_000 } });
+  });
+
+  it("ynab_move_money decreases the source and increases the target category", async () => {
+    const budgeted: Record<string, number> = { from: 50_000, to: 0 };
+    const writes: Record<string, unknown> = {};
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/months/current/categories/:id`, ({ params }) =>
+        HttpResponse.json({
+          data: {
+            category: fakeCategory({
+              id: String(params.id),
+              budgeted: budgeted[String(params.id)] ?? 0,
+            }),
+          },
+        }),
+      ),
+      http.patch(
+        `${BASE}/plans/last-used/months/current/categories/:id`,
+        async ({ params, request }) => {
+          writes[String(params.id)] = await request.json();
+          return HttpResponse.json({ data: { category: fakeCategory({ id: String(params.id) }) } });
+        },
+      ),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_move_money",
+      arguments: {
+        budget_id: "last-used",
+        month: "current",
+        amount: 20_000,
+        from_category_id: "from",
+        to_category_id: "to",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(writes).toEqual({
+      from: { category: { budgeted: 30_000 } },
+      to: { category: { budgeted: 20_000 } },
+    });
+  });
+
+  it("ynab_move_money reports a partial move when the second write fails", async () => {
+    mswServer.use(
+      http.get(`${BASE}/plans/last-used/months/current/categories/:id`, ({ params }) =>
+        HttpResponse.json({
+          data: {
+            category: fakeCategory({ id: String(params.id), name: "Fun", budgeted: 50_000 }),
+          },
+        }),
+      ),
+      http.patch(`${BASE}/plans/last-used/months/current/categories/from`, () =>
+        HttpResponse.json({ data: { category: fakeCategory({ id: "from", name: "Fun" }) } }),
+      ),
+      http.patch(`${BASE}/plans/last-used/months/current/categories/to`, () =>
+        ynabErrorResponse(404, "404", "not_found", "Category not found"),
+      ),
+    );
+
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "ynab_move_money",
+      arguments: {
+        budget_id: "last-used",
+        month: "current",
+        amount: 20_000,
+        from_category_id: "from",
+        to_category_id: "to",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result.content)).toMatch(/already taken out of "Fun".*Ready to Assign/);
   });
 });

@@ -4,6 +4,7 @@ import type {
   Category,
   CategoryGroup,
   CategoryGroupWithCategories,
+  HybridTransaction,
   MonthDetail,
   MonthSummary,
   Payee,
@@ -22,15 +23,20 @@ export interface NewCategoryInput {
   goalTarget?: number;
   goalTargetDate?: string;
   goalNeedsWholeAmount?: boolean;
+  goalFrequency?: GoalFrequency;
 }
+
+export type GoalFrequency = "monthly" | "weekly" | "yearly";
 
 export interface CategoryUpdateInput {
   name?: string;
   note?: string;
   categoryGroupId?: string;
-  goalTarget?: number;
+  /** `null` removes the category's existing goal. */
+  goalTarget?: number | null;
   goalTargetDate?: string;
   goalNeedsWholeAmount?: boolean;
+  goalFrequency?: GoalFrequency;
 }
 
 export type ClearedStatus = "cleared" | "uncleared" | "reconciled";
@@ -49,6 +55,14 @@ export interface NewAccountInput {
   balance: number;
 }
 
+export interface SubtransactionInput {
+  amount: number;
+  payeeId?: string;
+  payeeName?: string;
+  categoryId?: string;
+  memo?: string;
+}
+
 export interface NewTransactionInput {
   accountId: string;
   date: string;
@@ -59,6 +73,7 @@ export interface NewTransactionInput {
   memo?: string;
   cleared?: ClearedStatus;
   approved?: boolean;
+  subtransactions?: SubtransactionInput[];
 }
 
 export interface TransactionUpdateInput {
@@ -71,6 +86,22 @@ export interface TransactionUpdateInput {
   memo?: string;
   cleared?: ClearedStatus;
   approved?: boolean;
+  subtransactions?: SubtransactionInput[];
+}
+
+export interface BulkTransactionUpdateInput extends TransactionUpdateInput {
+  id: string;
+}
+
+export type TransactionTypeFilter = "uncategorized" | "unapproved";
+
+export interface ListTransactionsOptions {
+  sinceDate?: string;
+  untilDate?: string;
+  type?: TransactionTypeFilter;
+  lastKnowledgeOfServer?: number;
+  /** Only transactions in this account (YNAB's per-account endpoint). */
+  accountId?: string;
 }
 
 /**
@@ -82,6 +113,16 @@ export interface TransactionUpdateInput {
 export interface ListResult<T> {
   items: T[];
   serverKnowledge: number;
+}
+
+/**
+ * YNAB's per-category and per-payee transaction endpoints return "hybrid"
+ * rows (a split's subtransactions appear as their own rows, tagged with
+ * `type`/`parent_transaction_id`) and may omit `server_knowledge`.
+ */
+export interface HybridListResult {
+  items: HybridTransaction[];
+  serverKnowledge: number | null;
 }
 
 /**
@@ -117,6 +158,7 @@ export interface YnabClient {
     categoryId: string,
     input: CategoryUpdateInput,
   ): Promise<Category>;
+  getMonthCategory(budgetId: string, month: string, categoryId: string): Promise<Category>;
   assignBudgetedAmount(
     budgetId: string,
     month: string,
@@ -135,8 +177,14 @@ export interface YnabClient {
   ): Promise<ListResult<ScheduledTransactionDetail>>;
   listTransactions(
     budgetId: string,
-    options?: { sinceDate?: string; untilDate?: string; lastKnowledgeOfServer?: number },
+    options?: ListTransactionsOptions,
   ): Promise<ListResult<TransactionDetail>>;
+  listTransactionsByCategoryOrPayee(
+    budgetId: string,
+    filter: { categoryId: string } | { payeeId: string },
+    options?: Omit<ListTransactionsOptions, "accountId">,
+  ): Promise<HybridListResult>;
+  getTransaction(budgetId: string, transactionId: string): Promise<TransactionDetail>;
   createTransaction(budgetId: string, input: NewTransactionInput): Promise<TransactionDetail>;
   createTransactionsBulk(
     budgetId: string,
@@ -147,7 +195,13 @@ export interface YnabClient {
     transactionId: string,
     input: TransactionUpdateInput,
   ): Promise<TransactionDetail>;
+  updateTransactionsBulk(
+    budgetId: string,
+    updates: BulkTransactionUpdateInput[],
+  ): Promise<TransactionDetail[]>;
   deleteTransaction(budgetId: string, transactionId: string): Promise<TransactionDetail>;
+  /** Triggers a bank import on all linked accounts; returns the imported transaction ids. */
+  importTransactions(budgetId: string): Promise<string[]>;
 }
 
 export function createYnabClient(accessToken: string, apiBaseUrl?: string): YnabClient {
@@ -216,34 +270,56 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
     },
 
     async createCategory(budgetId, input) {
-      const res = await api.categories.createCategory(budgetId, {
-        category: {
-          category_group_id: input.categoryGroupId,
-          name: input.name,
-          ...(input.note !== undefined && { note: input.note }),
-          ...(input.goalTarget !== undefined && { goal_target: input.goalTarget }),
-          ...(input.goalTargetDate !== undefined && { goal_target_date: input.goalTargetDate }),
-          ...(input.goalNeedsWholeAmount !== undefined && {
-            goal_needs_whole_amount: input.goalNeedsWholeAmount,
-          }),
+      const res = await api.categories.createCategory(
+        budgetId,
+        {
+          category: {
+            category_group_id: input.categoryGroupId,
+            name: input.name,
+            ...(input.note !== undefined && { note: input.note }),
+            ...(input.goalTarget !== undefined && { goal_target: input.goalTarget }),
+            ...(input.goalTargetDate !== undefined && { goal_target_date: input.goalTargetDate }),
+            ...(input.goalNeedsWholeAmount !== undefined && {
+              goal_needs_whole_amount: input.goalNeedsWholeAmount,
+            }),
+          },
         },
-      });
+        withRawCategoryFields({
+          ...(input.goalFrequency !== undefined && { goal_frequency: input.goalFrequency }),
+        }),
+      );
       return res.data.category;
     },
 
     async updateCategory(budgetId, categoryId, input) {
-      const res = await api.categories.updateCategory(budgetId, categoryId, {
-        category: {
-          ...(input.name !== undefined && { name: input.name }),
-          ...(input.note !== undefined && { note: input.note }),
-          ...(input.categoryGroupId !== undefined && { category_group_id: input.categoryGroupId }),
-          ...(input.goalTarget !== undefined && { goal_target: input.goalTarget }),
-          ...(input.goalTargetDate !== undefined && { goal_target_date: input.goalTargetDate }),
-          ...(input.goalNeedsWholeAmount !== undefined && {
-            goal_needs_whole_amount: input.goalNeedsWholeAmount,
-          }),
+      const res = await api.categories.updateCategory(
+        budgetId,
+        categoryId,
+        {
+          category: {
+            ...(input.name !== undefined && { name: input.name }),
+            ...(input.note !== undefined && { note: input.note }),
+            ...(input.categoryGroupId !== undefined && {
+              category_group_id: input.categoryGroupId,
+            }),
+            ...(input.goalTarget !== undefined &&
+              input.goalTarget !== null && { goal_target: input.goalTarget }),
+            ...(input.goalTargetDate !== undefined && { goal_target_date: input.goalTargetDate }),
+            ...(input.goalNeedsWholeAmount !== undefined && {
+              goal_needs_whole_amount: input.goalNeedsWholeAmount,
+            }),
+          },
         },
-      });
+        withRawCategoryFields({
+          ...(input.goalTarget === null && { goal_target: null }),
+          ...(input.goalFrequency !== undefined && { goal_frequency: input.goalFrequency }),
+        }),
+      );
+      return res.data.category;
+    },
+
+    async getMonthCategory(budgetId, month, categoryId) {
+      const res = await api.categories.getMonthCategoryById(budgetId, month, categoryId);
       return res.data.category;
     },
 
@@ -296,14 +372,54 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
     },
 
     async listTransactions(budgetId, options) {
-      const res = await api.transactions.getTransactions(
-        budgetId,
-        options?.sinceDate,
-        options?.untilDate,
-        undefined,
-        options?.lastKnowledgeOfServer,
-      );
+      const res =
+        options?.accountId !== undefined
+          ? await api.transactions.getTransactionsByAccount(
+              budgetId,
+              options.accountId,
+              options.sinceDate,
+              options.untilDate,
+              options.type,
+              options.lastKnowledgeOfServer,
+            )
+          : await api.transactions.getTransactions(
+              budgetId,
+              options?.sinceDate,
+              options?.untilDate,
+              options?.type,
+              options?.lastKnowledgeOfServer,
+            );
       return { items: res.data.transactions, serverKnowledge: res.data.server_knowledge };
+    },
+
+    async listTransactionsByCategoryOrPayee(budgetId, filter, options) {
+      const res =
+        "categoryId" in filter
+          ? await api.transactions.getTransactionsByCategory(
+              budgetId,
+              filter.categoryId,
+              options?.sinceDate,
+              options?.untilDate,
+              options?.type,
+              options?.lastKnowledgeOfServer,
+            )
+          : await api.transactions.getTransactionsByPayee(
+              budgetId,
+              filter.payeeId,
+              options?.sinceDate,
+              options?.untilDate,
+              options?.type,
+              options?.lastKnowledgeOfServer,
+            );
+      return {
+        items: res.data.transactions,
+        serverKnowledge: res.data.server_knowledge ?? null,
+      };
+    },
+
+    async getTransaction(budgetId, transactionId) {
+      const res = await api.transactions.getTransactionById(budgetId, transactionId);
+      return res.data.transaction;
     },
 
     async createTransaction(budgetId, input) {
@@ -330,10 +446,50 @@ export function createYnabClient(accessToken: string, apiBaseUrl?: string): Ynab
       return res.data.transaction;
     },
 
+    async updateTransactionsBulk(budgetId, updates) {
+      const res = await api.transactions.updateTransactions(budgetId, {
+        transactions: updates.map((u) => ({ id: u.id, ...transactionUpdateToSdk(u) })),
+      });
+      return res.data.transactions ?? [];
+    },
+
     async deleteTransaction(budgetId, transactionId) {
       const res = await api.transactions.deleteTransaction(budgetId, transactionId);
       return res.data.transaction;
     },
+
+    async importTransactions(budgetId) {
+      const res = await api.transactions.importTransactions(budgetId);
+      return res.data.transaction_ids;
+    },
+  };
+}
+
+/**
+ * The `ynab` SDK (4.5.0) lags the YNAB API spec (1.87.0) for category writes:
+ * its `ExistingCategory` type has no `null` for `goal_target` (the spec says
+ * "passing null removes any existing target"), and its serializer drops
+ * `goal_frequency` entirely. This override merges such fields into the
+ * already-serialized request body, which the SDK hands over as a plain JSON
+ * object before stringifying it.
+ */
+function withRawCategoryFields(
+  fields: Record<string, unknown>,
+): ynab.InitOverrideFunction | undefined {
+  if (Object.keys(fields).length === 0) return undefined;
+  return async ({ init }) => {
+    Object.assign(init.body.category, fields);
+    return {};
+  };
+}
+
+function subtransactionToSdk(input: SubtransactionInput): ynab.SaveSubTransaction {
+  return {
+    amount: input.amount,
+    ...(input.payeeId !== undefined && { payee_id: input.payeeId }),
+    ...(input.payeeName !== undefined && { payee_name: input.payeeName }),
+    ...(input.categoryId !== undefined && { category_id: input.categoryId }),
+    ...(input.memo !== undefined && { memo: input.memo }),
   };
 }
 
@@ -348,6 +504,9 @@ function newTransactionToSdk(input: NewTransactionInput): ynab.NewTransaction {
     ...(input.memo !== undefined && { memo: input.memo }),
     ...(input.cleared !== undefined && { cleared: input.cleared }),
     ...(input.approved !== undefined && { approved: input.approved }),
+    ...(input.subtransactions !== undefined && {
+      subtransactions: input.subtransactions.map(subtransactionToSdk),
+    }),
   };
 }
 
@@ -362,5 +521,8 @@ function transactionUpdateToSdk(input: TransactionUpdateInput): ynab.ExistingTra
     ...(input.memo !== undefined && { memo: input.memo }),
     ...(input.cleared !== undefined && { cleared: input.cleared }),
     ...(input.approved !== undefined && { approved: input.approved }),
+    ...(input.subtransactions !== undefined && {
+      subtransactions: input.subtransactions.map(subtransactionToSdk),
+    }),
   };
 }
